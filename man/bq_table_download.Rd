@@ -13,7 +13,8 @@ bq_table_download(
   quiet = getOption("bigrquery.quiet", NA),
   bigint = c("integer", "integer64", "numeric", "character"),
   api = c("json", "arrow"),
-  billing = x$project
+  billing = x$project,
+  columns = NULL
 )
 }
 \arguments{
@@ -56,6 +57,12 @@ if the bigrquerystorage package is installed.}
 \item{billing}{(Arrow only) Project to bill; defaults to the project of \code{x},
 and typically only needs to be specified if you're working with public
 datasets.}
+
+\item{columns}{An optional character vector of column names. If supplied,
+only these columns are downloaded (in the given order). This pushes the
+projection down to the table download so that wide tables don't transfer
+columns you don't need. Renaming is not supported here; the columns keep
+their original names. Leave \code{NULL} to download every column.}
 }
 \value{
 Because data retrieval may generate list-columns and the \code{data.frame}

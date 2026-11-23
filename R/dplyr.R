@@ -183,10 +183,10 @@ collect.tbl_BigQueryConnection <- function(
   billing <- con@billing
 
   if (op_can_download(x)) {
-    lq <- x$lazy_query
     name <- op_table(x, con)
     tb <- as_bq_table(con, name)
     n <- min(op_rows(x$lazy_query), n)
+    projection <- op_download_projection(x$lazy_query)
   } else {
     sql <- dbplyr::db_sql_render(con, x)
 
@@ -209,6 +209,7 @@ collect.tbl_BigQueryConnection <- function(
         ...
       )
     }
+    projection <- NULL
   }
 
   quiet <- if (n < 100) TRUE else con@quiet
@@ -221,7 +222,8 @@ collect.tbl_BigQueryConnection <- function(
       quiet = quiet,
       bigint = bigint,
       billing = billing,
-      api = "arrow"
+      api = "arrow",
+      columns = projection$columns
     )
   } else {
     out <- bq_table_download(
@@ -231,14 +233,19 @@ collect.tbl_BigQueryConnection <- function(
       quiet = quiet,
       max_connections = max_connections,
       bigint = bigint,
-      api = "json"
+      api = "json",
+      columns = projection$columns
     )
+  }
+
+  if (!is.null(projection$renamed)) {
+    names(out) <- projection$renamed
   }
 
   dplyr::grouped_df(out, intersect(dbplyr::op_grps(x), names(out)))
 }
 
-# Can download directly if only head and
+# Can download directly if only head and a safe column selection
 
 op_can_download <- function(x) UseMethod("op_can_download")
 #' @export
@@ -270,8 +277,7 @@ query_is_head_only <- function(x) {
     return(FALSE)
   }
 
-  vars_base <- dbplyr::op_vars(x$x)
-  if (!is_select_trivial(x$select, vars_base)) {
+  if (!is_select_safe(x$select, dbplyr::op_vars(x$x))) {
     return(FALSE)
   }
 
@@ -288,10 +294,64 @@ query_is_head_only <- function(x) {
   TRUE
 }
 
+# A selection is safe to push down to a table download when every output
+# column is a bare reference to a column of the underlying table (no computed
+# expressions, matches, or across() calls). Reordering, subsetting, and
+# renaming are all safe because the download only cares about which physical
+# columns to fetch; output names and order are restored afterwards.
+is_select_safe <- function(select, vars_prev) {
+  all(vapply(select$expr, is_symbol, logical(1))) &&
+    all(vapply(select$expr, as_string, character(1)) %in% vars_prev)
+}
+
+# A safe selection is trivial when it returns every column of the underlying
+# table, in order, with the original names.
 is_select_trivial <- function(select, vars_prev) {
   identical(select$name, vars_prev) &&
-    all(vapply(select$expr, is_symbol, logical(1))) &&
     identical(syms(select$name), select$expr)
+}
+
+# Describe the projection to push down to the table download.
+#
+# Returns a list with:
+# * `columns`: the underlying table columns to fetch, in download order
+#   (or NULL to fetch every column), and
+# * `renamed`: the names the result should have after download, or NULL when
+#   the downloaded columns already have the right names and order.
+op_download_projection <- function(x) UseMethod("op_download_projection")
+#' @export
+op_download_projection.tbl_lazy <- function(x) {
+  op_download_projection(x$lazy_query)
+}
+#' @export
+op_download_projection.lazy_query <- function(x) {
+  list(columns = NULL, renamed = NULL)
+}
+#' @export
+op_download_projection.lazy_select_query <- function(x) {
+  vars_base <- dbplyr::op_vars(x$x)
+  select <- x$select
+
+  if (!is_select_safe(select, vars_base)) {
+    return(list(columns = NULL, renamed = NULL))
+  }
+
+  source <- vapply(select$expr, as_string, character(1))
+  target <- select$name
+
+  # The trivial selection (every column, original order and names) needs no
+  # projection and no post-processing at all.
+  if (is_select_trivial(select, vars_base)) {
+    return(list(columns = NULL, renamed = NULL))
+  }
+
+  # dbplyr guarantees each underlying column appears at most once in a
+  # select. When every column is referenced (in any order, possibly renamed),
+  # there's nothing to prune server-side, so download the whole table and
+  # fix up the result locally. Otherwise fetch only the referenced columns,
+  # which the API returns in `source` order.
+  columns <- if (setequal(source, vars_base)) NULL else source
+  list(columns = columns, renamed = target)
 }
 
 

@@ -181,6 +181,135 @@ test_that("arrow api respects bigint", {
   expect_identical(out_chr, x)
 })
 
+# column projection -------------------------------------------------------
+
+test_that("check_columns() validates its input", {
+  expect_null(check_columns(NULL))
+  expect_equal(check_columns(c("a", "b")), c("a", "b"))
+  expect_snapshot(error = TRUE, check_columns(character()))
+  expect_snapshot(error = TRUE, check_columns(c("a", NA)))
+  expect_snapshot(error = TRUE, check_columns(c("a", "a")))
+  expect_snapshot(error = TRUE, check_columns(1:3))
+})
+
+test_that("bq_selected_fields() builds a comma-separated list", {
+  expect_null(bq_selected_fields(NULL))
+  expect_equal(bq_selected_fields(c("a", "b")), "a,b")
+})
+
+test_that("bq_download_schema_filter() keeps only requested columns, in order", {
+  meta <- list(schema = list(fields = list(
+    list(name = "id", type = "INTEGER", mode = "NULLABLE"),
+    list(name = "name", type = "STRING", mode = "NULLABLE"),
+    list(name = "score", type = "FLOAT", mode = "NULLABLE")
+  )))
+  path <- tempfile()
+  writeBin(
+    charToRaw(as.character(jsonlite::toJSON(meta, auto_unbox = TRUE))),
+    path
+  )
+
+  bq_download_schema_filter(path, c("name", "id"))
+  filtered <- jsonlite::fromJSON(brio::read_file(path), simplifyVector = FALSE)
+  expect_equal(
+    vapply(filtered$schema$fields, `[[`, "", "name"),
+    c("name", "id")
+  )
+
+  # zero-row parsing against the filtered schema keeps types and names
+  out <- bq_parse_files(path, character(), n = 0, quiet = TRUE)
+  expect_equal(nrow(out), 0)
+  expect_named(out, c("name", "id"))
+  expect_s3_class(out$id, "integer64")
+  expect_type(out$name, "character")
+
+  expect_snapshot(error = TRUE, bq_download_schema_filter(path, "missing"))
+})
+
+test_that("bq_table_download() projects columns via the JSON API", {
+  tb <- as_bq_table("proj.ds.tbl")
+  schema <- list(schema = list(fields = list(
+    list(name = "id", type = "INTEGER", mode = "NULLABLE"),
+    list(name = "name", type = "STRING", mode = "NULLABLE"),
+    list(name = "score", type = "FLOAT", mode = "NULLABLE")
+  )))
+  # Rows come back in the selected order: name, then id.
+  payload <- list(rows = list(
+    list(f = list(list(v = "alice"), list(v = "10"))),
+    list(f = list(list(v = "bob"), list(v = "20")))
+  ))
+  payload_json <- as.character(jsonlite::toJSON(payload, auto_unbox = TRUE))
+
+  url <- NULL
+  local_mocked_bindings(
+    bq_table_nrow = function(x) 2,
+    bq_download_schema = function(x, path) {
+      writeBin(
+        charToRaw(as.character(jsonlite::toJSON(schema, auto_unbox = TRUE))),
+        path
+      )
+      path
+    }
+  )
+  local_mocked_bindings(
+    new_pool = function() structure(list(), class = "pool"),
+    multi_run = function(...) invisible(NULL),
+    multi_add = function(handle, done = NULL, ...) {
+      url <<- curl::handle_data(handle)$url
+      if (is.function(done)) {
+        done(list(
+          status_code = 200L,
+          headers = charToRaw("content-type: application/json\r\n"),
+          content = charToRaw(payload_json)
+        ))
+      }
+    },
+    .package = "curl"
+  )
+
+  out <- bq_table_download(
+    tb,
+    n_max = 2,
+    api = "json",
+    columns = c("name", "id"),
+    quiet = TRUE
+  )
+  expect_match(url, "selectedFields=name%2Cid")
+  expect_named(out, c("name", "id"))
+  expect_equal(out$name, c("alice", "bob"))
+  expect_equal(bit64::as.integer64(out$id), bit64::as.integer64(c(10, 20)))
+})
+
+test_that("bq_table_download() projects columns with zero rows", {
+  tb <- as_bq_table("proj.ds.tbl")
+  schema <- list(schema = list(fields = list(
+    list(name = "id", type = "INTEGER", mode = "NULLABLE"),
+    list(name = "name", type = "STRING", mode = "NULLABLE")
+  )))
+  local_mocked_bindings(
+    bq_table_nrow = function(x) 0,
+    bq_download_schema = function(x, path) {
+      writeBin(
+        charToRaw(as.character(jsonlite::toJSON(schema, auto_unbox = TRUE))),
+        path
+      )
+      path
+    }
+  )
+
+  out <- bq_table_download(
+    tb,
+    n_max = 0,
+    api = "json",
+    columns = c("name", "id"),
+    quiet = TRUE
+  )
+  expect_equal(nrow(out), 0)
+  expect_named(out, c("name", "id"))
+  expect_type(out$name, "character")
+  expect_s3_class(out$id, "integer64")
+})
+
 # helpers around row and chunk params ------------------------------------------
 
 test_that("set_row_params() works ", {

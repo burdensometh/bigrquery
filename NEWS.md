@@ -1,5 +1,13 @@
 # bigrquery (development version)
 
+* `bq_table_download()` gains a `columns` argument that pushes a column
+  projection down to the table download, so wide tables only transfer the
+  columns you need. `collect()` now takes advantage of this for safe dplyr
+  selections (column subsetting, reordering, and renaming), preserving the
+  selection order, names, and zero-row column types. Selections involving
+  computed columns or other transformations continue to run through the
+  normal query flow.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).

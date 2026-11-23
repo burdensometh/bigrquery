@@ -153,6 +153,117 @@ test_that("collect can identify directly download tables", {
   expect_false(op_can_download(head(bq7)))
 })
 
+test_that("safe column selections are pushed down to the table download", {
+  con <- simulate_bigrquery()
+  tbl <- dplyr::tbl(
+    dbplyr::src_dbi(con, auto_disconnect = FALSE),
+    from = dbplyr::ident("tbl"),
+    vars = c("a", "b", "c")
+  )
+
+  # No select layer, or a trivial one: no projection
+  expect_equal(
+    op_download_projection(tbl),
+    list(columns = NULL, renamed = NULL)
+  )
+  expect_equal(
+    op_download_projection(head(tbl, 3)),
+    list(columns = NULL, renamed = NULL)
+  )
+  expect_equal(
+    op_download_projection(dplyr::select(tbl, a, b, c)),
+    list(columns = NULL, renamed = NULL)
+  )
+
+  # A subset is projected, preserving selection order and names
+  expect_equal(
+    op_download_projection(dplyr::select(tbl, c, a)),
+    list(columns = c("c", "a"), renamed = c("c", "a"))
+  )
+  # Renaming fetches the underlying columns but records the new names
+  expect_equal(
+    op_download_projection(dplyr::select(tbl, z = a, c)),
+    list(columns = c("a", "c"), renamed = c("z", "c"))
+  )
+  expect_equal(
+    op_download_projection(head(dplyr::rename(tbl, z = a), 2)),
+    list(columns = NULL, renamed = c("z", "b", "c"))
+  )
+  # Reordering every column doesn't prune anything, just reorders locally
+  expect_equal(
+    op_download_projection(dplyr::relocate(tbl, c, .before = a)),
+    list(columns = NULL, renamed = c("c", "a", "b"))
+  )
+})
+
+test_that("selections with computed columns use the normal query path", {
+  con <- simulate_bigrquery()
+  tbl <- dplyr::tbl(
+    dbplyr::src_dbi(con, auto_disconnect = FALSE),
+    from = dbplyr::ident("tbl"),
+    vars = c("a", "b", "c")
+  )
+
+  expect_false(op_can_download(dplyr::mutate(tbl, d = a + 1)))
+  expect_false(op_can_download(head(dplyr::mutate(tbl, d = a + 1), 2)))
+  expect_false(op_can_download(dplyr::filter(tbl, a == 1)))
+  expect_false(op_can_download(dplyr::arrange(tbl, a)))
+  expect_false(op_can_download(dplyr::distinct(tbl, a)))
+  expect_false(
+    op_can_download(dplyr::select(dplyr::mutate(tbl, d = a + 1), d))
+  )
+})
+
+test_that("collect() downloads only the selected columns", {
+  con <- simulate_bigrquery()
+  tbl <- dplyr::tbl(
+    dbplyr::src_dbi(con, auto_disconnect = FALSE),
+    from = dbplyr::ident("tbl"),
+    vars = c("a", "b", "c")
+  )
+  full <- tibble::tibble(a = 1:3, b = 4:6, c = 7:9)
+
+  args <- NULL
+  local_mocked_bindings(
+    bq_table_download = function(tb, ...,
+                                 columns = NULL, n_max = Inf, api = "json",
+                                 bigint = "integer", quiet = TRUE,
+                                 page_size = NULL, max_connections = 6L,
+                                 billing = "test") {
+      args <<- list(columns = columns, n_max = n_max)
+      out <- if (is.null(columns)) full else full[columns]
+      if (is.finite(n_max)) {
+        out <- out[seq_len(min(n_max, nrow(out))), , drop = FALSE]
+      }
+      out
+    }
+  )
+
+  # Subset + head: projection and row limit are pushed down
+  out <- dplyr::collect(head(dplyr::select(tbl, c, a), 2))
+  expect_equal(args$columns, c("c", "a"))
+  expect_equal(args$n_max, 2)
+  expect_named(out, c("c", "a"))
+  expect_equal(nrow(out), 2)
+
+  # Rename: physical columns are fetched, output gets the new names
+  out <- dplyr::collect(dplyr::select(tbl, z = a, c))
+  expect_equal(args$columns, c("a", "c"))
+  expect_named(out, c("z", "c"))
+
+  # Reordering all columns downloads everything and reorders locally
+  out <- dplyr::collect(dplyr::relocate(tbl, c, .before = a))
+  expect_null(args$columns)
+  expect_named(out, c("c", "a", "b"))
+
+  # Zero rows keep the selected column names and order
+  out <- dplyr::collect(head(dplyr::select(tbl, b, a), 0))
+  expect_equal(args$columns, c("b", "a"))
+  expect_equal(args$n_max, 0)
+  expect_equal(nrow(out), 0)
+  expect_named(out, c("b", "a"))
+})
+
 test_that("casting uses bigquery types", {
   skip_if_not_installed("dbplyr")
   con <- simulate_bigrquery()

@@ -62,6 +62,11 @@
 #'   but results in `NA` for values above/below +/- 2147483647. `"integer64"`
 #'   returns a [bit64::integer64], which allows the full range of 64 bit
 #'   integers.
+#' @param columns An optional character vector of column names. If supplied,
+#'   only these columns are downloaded (in the given order). This pushes the
+#'   projection down to the table download so that wide tables don't transfer
+#'   columns you don't need. Renaming is not supported here; the columns keep
+#'   their original names. Leave `NULL` to download every column.
 #' @param billing (Arrow only) Project to bill; defaults to the project of `x`,
 #'   and typically only needs to be specified if you're working with public
 #'   datasets.
@@ -80,7 +85,8 @@ bq_table_download <-
     quiet = getOption("bigrquery.quiet", NA),
     bigint = c("integer", "integer64", "numeric", "character"),
     api = c("json", "arrow"),
-    billing = x$project
+    billing = x$project,
+    columns = NULL
   ) {
     x <- as_bq_table(x)
     check_number_whole(n_max, min = 0, allow_infinite = TRUE)
@@ -89,6 +95,7 @@ bq_table_download <-
     quiet <- check_quiet(quiet)
     bigint <- arg_match(bigint)
     api <- check_api(api)
+    columns <- check_columns(columns)
 
     if (api == "arrow") {
       check_installed(
@@ -114,13 +121,13 @@ bq_table_download <-
         )
       }
 
-      return(bigrquerystorage::bqs_table_download(
+      return(bqs_download(
         x = toString(x),
         parent = billing,
         n_max = n_max,
         quiet = quiet,
         bigint = bigint,
-        as_tibble = TRUE
+        columns = columns
       ))
     }
 
@@ -134,6 +141,10 @@ bq_table_download <-
 
     schema_path <- bq_download_schema(x, tempfile())
     defer(unlink(schema_path))
+
+    if (!is.null(columns)) {
+      bq_download_schema_filter(schema_path, columns)
+    }
 
     if (n_max == 0) {
       table_data <- bq_parse_files(
@@ -165,7 +176,8 @@ bq_table_download <-
     handle <- bq_download_chunk_handle(
       x,
       begin = chunk_plan$dat$chunk_begin[1],
-      max_results = chunk_plan$dat$chunk_rows[1]
+      max_results = chunk_plan$dat$chunk_rows[1],
+      selected_fields = bq_selected_fields(columns)
     )
     curl::multi_add(
       handle,
@@ -228,7 +240,8 @@ bq_table_download <-
       handle <- bq_download_chunk_handle(
         x,
         begin = chunk_plan$dat$chunk_begin[i],
-        max_results = chunk_plan$dat$chunk_rows[i]
+        max_results = chunk_plan$dat$chunk_rows[i],
+        selected_fields = bq_selected_fields(columns)
       )
       curl::multi_add(
         handle,
@@ -377,7 +390,12 @@ set_chunk_plan <- function(n_max, chunk_size, n_chunks, start_index = 0) {
   )
 }
 
-bq_download_chunk_handle <- function(x, begin = 0L, max_results = 1e4) {
+bq_download_chunk_handle <- function(
+  x,
+  begin = 0L,
+  max_results = 1e4,
+  selected_fields = NULL
+) {
   x <- as_bq_table(x)
   check_number_whole(begin, min = 0)
   check_number_whole(max_results, min = 1, allow_infinite = TRUE)
@@ -386,7 +404,8 @@ bq_download_chunk_handle <- function(x, begin = 0L, max_results = 1e4) {
   # API doesn't accept numbers like 1e5. See issue #395 for details.
   query <- list(
     startIndex = format(begin, scientific = FALSE),
-    maxResults = format(max_results, scientific = FALSE)
+    maxResults = format(max_results, scientific = FALSE),
+    selectedFields = selected_fields
   )
 
   url <- paste0(
@@ -431,6 +450,95 @@ bq_download_callback <- function(path, progress = NULL, call = caller_env()) {
     defer(close(con))
     writeBin(result$content, con)
   }
+}
+
+# Column projection -------------------------------------------------------
+
+check_columns <- function(columns, call = caller_env()) {
+  if (is.null(columns)) {
+    return(NULL)
+  }
+  if (!is.character(columns) || length(columns) == 0) {
+    cli::cli_abort(
+      "{.arg columns} must be NULL or a non-empty character vector.",
+      call = call
+    )
+  }
+  if (anyNA(columns) || !all(nzchar(columns))) {
+    cli::cli_abort(
+      "{.arg columns} must not contain NA or empty strings.",
+      call = call
+    )
+  }
+  if (anyDuplicated(columns)) {
+    cli::cli_abort(
+      "{.arg columns} must not contain duplicated names.",
+      call = call
+    )
+  }
+  columns
+}
+
+# The tabledata.list `selectedFields` query parameter is a comma-separated
+# list of top-level field names.
+bq_selected_fields <- function(columns) {
+  if (is.null(columns)) {
+    NULL
+  } else {
+    paste(columns, collapse = ",")
+  }
+}
+
+# Rewrite the cached table schema so it only describes the projected
+# columns. The C++ parser indexes row values positionally, so the schema
+# must line up exactly (and in the same order) as the fields returned by
+# the `selectedFields` projection.
+bq_download_schema_filter <- function(schema_path, columns) {
+  meta <- jsonlite::fromJSON(brio::read_file(schema_path), simplifyVector = FALSE)
+  fields <- meta$schema$fields
+  names <- vapply(fields, function(field) field$name, character(1))
+
+  missing <- setdiff(columns, names)
+  if (length(missing) > 0) {
+    cli::cli_abort(
+      c(
+        "Column{?s} not found in table schema: {.val {missing}}.",
+        i = "Available columns: {.val {names}}."
+      )
+    )
+  }
+
+  meta$schema$fields <- fields[match(columns, names)]
+  json <- jsonlite::toJSON(meta, auto_unbox = TRUE)
+  writeBin(charToRaw(json), schema_path)
+
+  schema_path
+}
+
+# The arrow API is provided by the bigrquerystorage package. Newer versions
+# support a `selected_fields` argument that pushes the projection down to the
+# storage API; older versions don't, so we download everything and select
+# locally (preserving the requested order) instead.
+bqs_download <- function(x, parent, n_max, quiet, bigint, columns) {
+  fun <- bigrquerystorage::bqs_table_download
+  args <- list(
+    x = x,
+    parent = parent,
+    n_max = n_max,
+    quiet = quiet,
+    bigint = bigint,
+    as_tibble = TRUE
+  )
+
+  if ("selected_fields" %in% names(formals(fun))) {
+    args$selected_fields <- columns
+  }
+  out <- do.call(fun, args)
+
+  if (!is.null(columns)) {
+    out <- out[columns]
+  }
+  out
 }
 
 # Helpers for testing -----------------------------------------------------

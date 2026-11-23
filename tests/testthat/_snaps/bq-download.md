@@ -24,3 +24,44 @@
       Warning in `bq_table_download()`:
       `max_connections` is ignored when `api == "arrow"`
 
+# check_columns() validates its input
+
+    Code
+      check_columns(character())
+    Condition
+      Error:
+      ! `columns` must be NULL or a non-empty character vector.
+
+---
+
+    Code
+      check_columns(c("a", NA))
+    Condition
+      Error:
+      ! `columns` must not contain NA or empty strings.
+
+---
+
+    Code
+      check_columns(c("a", "a"))
+    Condition
+      Error:
+      ! `columns` must not contain duplicated names.
+
+---
+
+    Code
+      check_columns(1:3)
+    Condition
+      Error:
+      ! `columns` must be NULL or a non-empty character vector.
+
+# bq_download_schema_filter() keeps only requested columns, in order
+
+    Code
+      bq_download_schema_filter(path, "missing")
+    Condition
+      Error in `bq_download_schema_filter()`:
+      ! Column not found in table schema: "missing".
+      i Available columns: "name" and "id".
+
