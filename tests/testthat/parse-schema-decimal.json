@@ -1,0 +1,50 @@
+{
+ "schema": {
+  "fields": [
+   {
+    "name": "num",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+   },
+   {
+    "name": "bignum",
+    "type": "BIGNUMERIC",
+    "mode": "NULLABLE"
+   },
+   {
+    "name": "num_array",
+    "type": "NUMERIC",
+    "mode": "REPEATED"
+   },
+   {
+    "name": "rec",
+    "type": "RECORD",
+    "mode": "NULLABLE",
+    "fields": [
+     {
+      "name": "n",
+      "type": "NUMERIC",
+      "mode": "NULLABLE"
+     },
+     {
+      "name": "b",
+      "type": "BIGNUMERIC",
+      "mode": "NULLABLE"
+     }
+    ]
+   },
+   {
+    "name": "rec_array",
+    "type": "RECORD",
+    "mode": "REPEATED",
+    "fields": [
+     {
+      "name": "n",
+      "type": "NUMERIC",
+      "mode": "REPEATED"
+     }
+    ]
+   }
+  ]
+ }
+}

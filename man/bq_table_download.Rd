@@ -12,6 +12,7 @@ bq_table_download(
   max_connections = 6L,
   quiet = getOption("bigrquery.quiet", NA),
   bigint = c("integer", "integer64", "numeric", "character"),
+  decimal = c("double", "character"),
   api = c("json", "arrow"),
   billing = x$project
 )
@@ -44,6 +45,18 @@ mapped to. The default is \code{"integer"}, which returns R's \code{integer} typ
 but results in \code{NA} for values above/below +/- 2147483647. \code{"integer64"}
 returns a \link[bit64:integer64]{bit64::integer64}, which allows the full range of 64 bit
 integers.}
+
+\item{decimal}{How to read BigQuery's \code{NUMERIC} and \code{BIGNUMERIC} types.
+The default, \code{"double"}, preserves the previous behaviour: \code{NUMERIC}
+values are converted to R's \code{double} (which can lose precision or range),
+while \code{BIGNUMERIC} values are returned as character vectors. Use
+\code{"character"} to instead return both types as the exact canonical string
+representations supplied by BigQuery. This is needed for reliable
+row-by-row reconciliation of values with many decimal places or
+magnitudes outside the range of a double, and also applies to \code{NUMERIC}
+and \code{BIGNUMERIC} fields nested inside records and repeated fields.
+Missing values are always returned as \code{NA}. Only supported by the
+\code{"json"} API.}
 
 \item{api}{Which API to use? The \code{"json"} API works where ever bigrquery
 does, but is slow and can require fiddling with the \code{page_size} parameter.

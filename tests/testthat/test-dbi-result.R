@@ -85,3 +85,65 @@ test_that("dbExecute returns modified rows", {
   expect_equal(DBI::dbExecute(con, "DELETE FROM foo WHERE a >= 2"), 2)
   DBI::dbExecute(con, "DROP TABLE foo")
 })
+
+test_that("dbFetch() passes the connection decimal setting to download", {
+  con <- DBI::dbConnect(
+    bigquery(),
+    project = "p",
+    dataset = "d",
+    decimal = "character"
+  )
+  res <- new(
+    "BigQueryResult",
+    bq_table = as_bq_table("p.d.t"),
+    statement = "SELECT 1",
+    nrow = 1,
+    affected = 0,
+    page_size = 1e4,
+    quiet = TRUE,
+    cursor = cursor(1),
+    bigint = "integer",
+    decimal = "character",
+    billing = "p"
+  )
+
+  local_mocked_bindings(
+    has_bigrquerystorage = function() FALSE,
+    bq_table_download = function(x, ..., decimal = "double", api) {
+      expect_equal(decimal, "character")
+      expect_equal(api, "json")
+      tibble::tibble(num = c("1.23456789"))
+    }
+  )
+
+  df <- DBI::dbFetch(res)
+  expect_identical(df$num, "1.23456789")
+})
+
+test_that("dbFetch() defaults to the historical double behaviour", {
+  res <- new(
+    "BigQueryResult",
+    bq_table = as_bq_table("p.d.t"),
+    statement = "SELECT 1",
+    nrow = 1,
+    affected = 0,
+    page_size = 1e4,
+    quiet = TRUE,
+    cursor = cursor(1),
+    bigint = "integer",
+    decimal = "double",
+    billing = "p"
+  )
+
+  local_mocked_bindings(
+    has_bigrquerystorage = function() FALSE,
+    bq_table_download = function(x, ..., decimal = "double", api) {
+      expect_equal(decimal, "double")
+      expect_equal(api, "json")
+      tibble::tibble(num = 1.23456789)
+    }
+  )
+
+  df <- DBI::dbFetch(res)
+  expect_type(df$num, "double")
+})

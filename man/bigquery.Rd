@@ -15,6 +15,7 @@
   quiet = NA,
   use_legacy_sql = FALSE,
   bigint = c("integer", "integer64", "numeric", "character"),
+  decimal = c("double", "character"),
   labels = getOption("bigrquery.labels"),
   ...
 )
@@ -37,6 +38,15 @@ if \code{NA} picks based on whether or not you're in an interactive context.}
 The default is \code{"integer"} which returns R's \code{integer} type but results in \code{NA} for
 values above/below +/- 2147483647. \code{"integer64"} returns a \link[bit64:integer64]{bit64::integer64},
 which allows the full range of 64 bit integers.}
+
+\item{decimal}{How BigQuery's \code{NUMERIC} and \code{BIGNUMERIC} types should be
+read. The default \code{"double"} preserves the previous behaviour
+(\code{NUMERIC} becomes R \code{double}, \code{BIGNUMERIC} becomes \code{character}).
+Use \code{"character"} to receive both types as their exact canonical string
+representations, including for fields nested inside records and repeated
+fields. This allows exact row-by-row string reconciliation and preserves
+values outside the range/precision of R doubles; missing values remain
+\code{NA}. Only applies to downloads via the JSON API.}
 
 \item{labels}{A named list of strings used to attach
 \href{https://docs.cloud.google.com/bigquery/docs/labels-intro}{BigQuery labels}

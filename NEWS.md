@@ -1,5 +1,15 @@
 # bigrquery (development version)
 
+* `bq_table_download()` gains a `decimal` argument, and `dbConnect()` gains
+  a matching argument. The default `"double"` preserves the previous
+  behaviour. Set `decimal = "character"` to read `NUMERIC` and `BIGNUMERIC`
+  values as their exact canonical string representations, including values
+  nested inside records and repeated fields and preserving missing values as
+  `NA`. This makes it possible to reconcile highly precise or very large
+  decimal values (which cannot be represented exactly by R doubles) by
+  string comparison. It is only supported by the JSON API; the arrow API
+  ignores it with a warning.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).

@@ -9,6 +9,7 @@ BigQueryConnection <- function(
   quiet = NA,
   use_legacy_sql = FALSE,
   bigint = c("integer", "integer64", "numeric", "character"),
+  decimal = c("double", "character"),
   labels = NULL
 ) {
   connection_capture()
@@ -22,6 +23,7 @@ BigQueryConnection <- function(
     quiet = quiet,
     use_legacy_sql = use_legacy_sql,
     bigint = match.arg(bigint),
+    decimal = match.arg(decimal),
     labels = labels
   )
 }
@@ -39,6 +41,7 @@ setClass(
     page_size = "integer",
     quiet = "logical",
     bigint = "character",
+    decimal = "character",
     labels = "ANY"
   )
 )

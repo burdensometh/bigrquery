@@ -41,14 +41,23 @@ enum BqType {
   BQ_RECORD,
   BQ_GEOGRAPHY,
   BQ_BYTES,
+  BQ_NUMERIC,
+  BQ_BIGNUMERIC,
   BQ_UNKNOWN
 };
+
+// Whether NUMERIC/BIGNUMERIC values are kept as their exact canonical string
+// representation (true) or converted to R doubles (false, the historical
+// default). Thread-local so concurrent R calls stay independent.
+static thread_local bool exact_decimal = false;
 
 BqType parse_bq_type(std::string x) {
   if (x == "INTEGER") {
     return BQ_INTEGER;
   } else if (x == "NUMERIC") {
-    return BQ_FLOAT;
+    return BQ_NUMERIC;
+  } else if (x == "BIGNUMERIC") {
+    return BQ_BIGNUMERIC;
   } else if (x == "FLOAT") {
     return BQ_FLOAT;
   } else if (x == "BOOLEAN") {
@@ -130,6 +139,20 @@ public:
       }
     case BQ_FLOAT:
       return cpp11::writable::doubles(n);
+    case BQ_NUMERIC:
+      if (exact_decimal) {
+        return cpp11::writable::strings(n);
+      } else {
+        return cpp11::writable::doubles(n);
+      }
+    case BQ_BIGNUMERIC:
+      if (exact_decimal) {
+        return cpp11::writable::strings(n);
+      } else {
+        cpp11::writable::strings out(n);
+        out.attr("bq_type") = type_str_;
+        return out;
+      }
     case BQ_BOOLEAN:
       return cpp11::writable::logicals(n);
     case BQ_STRING:
@@ -189,6 +212,26 @@ public:
     case BQ_TIMESTAMP:
     case BQ_FLOAT:
       REAL(x)[i] = v.IsString() ? atof(v.GetString()) : NA_REAL;
+      break;
+    case BQ_NUMERIC:
+      if (exact_decimal) {
+        if (v.IsString()) {
+          cpp11::sexp chr = Rf_mkCharLenCE(v.GetString(), v.GetStringLength(), CE_UTF8);
+          SET_STRING_ELT(x, i, chr);
+        } else {
+          SET_STRING_ELT(x, i, NA_STRING);
+        }
+      } else {
+        REAL(x)[i] = v.IsString() ? atof(v.GetString()) : NA_REAL;
+      }
+      break;
+    case BQ_BIGNUMERIC:
+      if (v.IsString()) {
+        cpp11::sexp chr = Rf_mkCharLenCE(v.GetString(), v.GetStringLength(), CE_UTF8);
+        SET_STRING_ELT(x, i, chr);
+      } else {
+        SET_STRING_ELT(x, i, NA_STRING);
+      }
       break;
     case BQ_BOOLEAN:
       if (v.IsString()) {
@@ -346,7 +389,8 @@ int bq_fields_set(const rapidjson::Value& data,
 }
 
 [[cpp11::register]]
-SEXP bq_parse(std::string meta_s, std::string data_s) {
+SEXP bq_parse(std::string meta_s, std::string data_s, bool exact_decimal_ = false) {
+  exact_decimal = exact_decimal_;
   rapidjson::Document meta_d;
   meta_d.Parse(&meta_s[0]);
   std::vector<BqField> fields = bq_fields_parse(meta_d);
@@ -363,7 +407,8 @@ SEXP bq_parse(std::string meta_s, std::string data_s) {
 }
 
 [[cpp11::register]]
-SEXP bq_field_init(std::string json, std::string value = "") {
+SEXP bq_field_init(std::string json, std::string value = "", bool exact_decimal_ = false) {
+  exact_decimal = exact_decimal_;
   rapidjson::Document d1;
   d1.Parse(&json[0]);
 
@@ -384,7 +429,9 @@ SEXP bq_field_init(std::string json, std::string value = "") {
 SEXP bq_parse_files(std::string schema_path,
                     std::vector<std::string> file_paths,
                     int n,
-                    bool quiet) {
+                    bool quiet,
+                    bool exact_decimal_ = false) {
+  exact_decimal = exact_decimal_;
 
   // Generate field specification
   rapidjson::Document schema_doc;

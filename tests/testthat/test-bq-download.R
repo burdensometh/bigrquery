@@ -397,3 +397,92 @@ test_that("can convert bytes type", {
     )
   )
 })
+
+# exact decimal mode --------------------------------------------------------
+
+test_that("bq_table_download() defaults preserve previous decimal behaviour", {
+  tb <- as_bq_table("x.y.z")
+  local_mocked_bindings(
+    bq_table_nrow = function(x) 3,
+    bq_download_schema = function(x, path) {
+      file.copy(test_path("parse-schema-decimal.json"), path)
+      path
+    },
+    bq_download_chunk_handle = function(x, begin = 0L, max_results = 1e4) {
+      structure(list(), class = "mock_handle")
+    },
+    bq_parse_file = function(fields, data, exact_decimal = FALSE) {
+      expect_false(exact_decimal)
+      bq_parse(
+        brio::read_file(test_path("parse-schema-decimal.json")),
+        brio::read_file(test_path("parse-values-decimal.json")),
+        FALSE
+      )
+    }
+  )
+  local_mocked_bindings(
+    multi_add = function(...) NULL,
+    multi_run = function(...) NULL,
+    .package = "curl"
+  )
+
+  df <- bq_table_download(tb, api = "json", quiet = TRUE)
+  expect_type(df$num, "double")
+  expect_type(df$bignum, "character")
+})
+
+test_that("bq_table_download(decimal = 'character') requests exact decimals", {
+  tb <- as_bq_table("x.y.z")
+  local_mocked_bindings(
+    bq_table_nrow = function(x) 3,
+    bq_download_schema = function(x, path) {
+      file.copy(test_path("parse-schema-decimal.json"), path)
+      path
+    },
+    bq_download_chunk_handle = function(x, begin = 0L, max_results = 1e4) {
+      structure(list(), class = "mock_handle")
+    },
+    bq_parse_file = function(fields, data, exact_decimal = FALSE) {
+      expect_true(exact_decimal)
+      bq_parse(
+        brio::read_file(test_path("parse-schema-decimal.json")),
+        brio::read_file(test_path("parse-values-decimal.json")),
+        TRUE
+      )
+    }
+  )
+  local_mocked_bindings(
+    multi_add = function(...) NULL,
+    multi_run = function(...) NULL,
+    .package = "curl"
+  )
+
+  df <- bq_table_download(
+    tb,
+    decimal = "character",
+    api = "json",
+    quiet = TRUE
+  )
+  expect_identical(df$num, c("123456789.123456789", NA, "-0.000000001"))
+  expect_identical(df$num_array[[1]], c("0.1", "-2.5", "100"))
+  expect_identical(df$rec[[1]]$n, "3.141592653589793238")
+  expect_identical(
+    df$rec_array[[1]]$n[[1]],
+    c("1.1", "2.2")
+  )
+})
+
+test_that("decimal = 'character' warns that the arrow API ignores it", {
+  skip_if_not_installed("bigrquerystorage")
+
+  tb <- as_bq_table("x.y.z")
+  expect_warning(
+    bq_table_download(
+      tb,
+      decimal = "character",
+      api = "arrow",
+      quiet = TRUE
+    ),
+    "only supported by the JSON API"
+  )
+})

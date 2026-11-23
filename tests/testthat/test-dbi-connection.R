@@ -252,3 +252,16 @@ test_that("DBI::sqlData return TRUE, FALSE for logical class", {
     DBI::SQL(c("TRUE", "FALSE", "NULL"))
   )
 })
+
+test_that("dbConnect() stores the decimal setting", {
+  con <- DBI::dbConnect(bigquery(), project = "p")
+  expect_equal(con@decimal, "double")
+
+  con <- DBI::dbConnect(bigquery(), project = "p", decimal = "character")
+  expect_equal(con@decimal, "character")
+
+  expect_snapshot(
+    DBI::dbConnect(bigquery(), project = "p", decimal = "nope"),
+    error = TRUE
+  )
+})

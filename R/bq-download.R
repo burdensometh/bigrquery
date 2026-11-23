@@ -62,6 +62,17 @@
 #'   but results in `NA` for values above/below +/- 2147483647. `"integer64"`
 #'   returns a [bit64::integer64], which allows the full range of 64 bit
 #'   integers.
+#' @param decimal How to read BigQuery's `NUMERIC` and `BIGNUMERIC` types.
+#'   The default, `"double"`, preserves the previous behaviour: `NUMERIC`
+#'   values are converted to R's `double` (which can lose precision or range),
+#'   while `BIGNUMERIC` values are returned as character vectors. Use
+#'   `"character"` to instead return both types as the exact canonical string
+#'   representations supplied by BigQuery. This is needed for reliable
+#'   row-by-row reconciliation of values with many decimal places or
+#'   magnitudes outside the range of a double, and also applies to `NUMERIC`
+#'   and `BIGNUMERIC` fields nested inside records and repeated fields.
+#'   Missing values are always returned as `NA`. Only supported by the
+#'   `"json"` API.
 #' @param billing (Arrow only) Project to bill; defaults to the project of `x`,
 #'   and typically only needs to be specified if you're working with public
 #'   datasets.
@@ -79,6 +90,7 @@ bq_table_download <-
     max_connections = 6L,
     quiet = getOption("bigrquery.quiet", NA),
     bigint = c("integer", "integer64", "numeric", "character"),
+    decimal = c("double", "character"),
     api = c("json", "arrow"),
     billing = x$project
   ) {
@@ -88,6 +100,8 @@ bq_table_download <-
     check_number_whole(max_connections, min = 1)
     quiet <- check_quiet(quiet)
     bigint <- arg_match(bigint)
+    decimal <- arg_match(decimal)
+    exact_decimal <- identical(decimal, "character")
     api <- check_api(api)
 
     if (api == "arrow") {
@@ -110,6 +124,13 @@ bq_table_download <-
       if (!missing(max_connections)) {
         cli::cli_warn(
           '{.arg max_connections} is ignored when {.code api == "arrow"}',
+          call = environment()
+        )
+      }
+      if (exact_decimal) {
+        cli::cli_warn(
+          '{.arg decimal = "character"} is only supported by the JSON API \\
+           and is ignored when {.code api == "arrow"}.',
           call = environment()
         )
       }
@@ -140,7 +161,8 @@ bq_table_download <-
         schema_path,
         file_paths = character(),
         n = 0,
-        quiet = quiet
+        quiet = quiet,
+        exact_decimal = exact_decimal
       )
       return(table_data)
     }
@@ -176,7 +198,11 @@ bq_table_download <-
     path_first_chunk <- chunk_plan$dat$path[1]
     defer(unlink(path_first_chunk))
 
-    chunk_data <- bq_parse_file(schema_path, path_first_chunk)
+    chunk_data <- bq_parse_file(
+      schema_path,
+      path_first_chunk,
+      exact_decimal = exact_decimal
+    )
     n_got <- nrow(chunk_data)
 
     if (n_got >= n_max) {
@@ -243,7 +269,8 @@ bq_table_download <-
       schema_path,
       c(path_first_chunk, chunk_plan$dat$path),
       n = n_max,
-      quiet = quiet
+      quiet = quiet,
+      exact_decimal = exact_decimal
     )
     parse_postprocess(table_data, bigint = bigint)
   }
@@ -435,11 +462,11 @@ bq_download_callback <- function(path, progress = NULL, call = caller_env()) {
 
 # Helpers for testing -----------------------------------------------------
 
-bq_parse_file <- function(fields, data) {
+bq_parse_file <- function(fields, data, exact_decimal = FALSE) {
   fields <- brio::read_file(fields)
   data <- brio::read_file(data)
 
-  bq_parse(fields, data)
+  bq_parse(fields, data, exact_decimal)
 }
 
 bq_download_schema <- function(x, path) {

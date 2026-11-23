@@ -42,6 +42,7 @@ BigQueryResult <- function(conn, sql, params = NULL, ...) {
     quiet = conn@quiet,
     cursor = cursor(nrow),
     bigint = conn@bigint,
+    decimal = conn@decimal,
     billing = conn@billing
   )
   res
@@ -61,6 +62,7 @@ setClass(
     quiet = "logical",
     cursor = "list",
     bigint = "character",
+    decimal = "character",
     billing = "character"
   )
 )
@@ -117,7 +119,9 @@ setMethod(
       n <- Inf
     }
 
-    if (has_bigrquerystorage() && n == Inf && res@cursor$cur() == 0) {
+    exact_decimal <- identical(res@decimal, "character")
+    if (has_bigrquerystorage() && n == Inf && res@cursor$cur() == 0 &&
+        !exact_decimal) {
       # https://github.com/meztez/bigrquerystorage/issues/48
       n <- res@cursor$left()
 
@@ -126,17 +130,20 @@ setMethod(
         res@bq_table,
         n_max = n,
         bigint = res@bigint,
+        decimal = res@decimal,
         quiet = res@quiet,
         api = "arrow"
       )
     } else {
-      # Otherwise, fall back to slower JSON API
+      # Otherwise, fall back to slower JSON API (also required for exact
+      # NUMERIC/BIGNUMERIC values, see decimal = "character")
       data <- bq_table_download(
         res@bq_table,
         n_max = n,
         start_index = res@cursor$cur(),
         page_size = res@page_size,
         bigint = res@bigint,
+        decimal = res@decimal,
         quiet = res@quiet,
         api = "json"
       )

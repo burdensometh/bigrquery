@@ -213,3 +213,97 @@ test_that("can parse bytes", {
     blob::blob(NULL)
   )
 })
+
+# Exact decimal (NUMERIC/BIGNUMERIC) --------------------------------------
+
+test_that("NUMERIC defaults to double and BIGNUMERIC to character", {
+  schema_path <- test_path("parse-schema-decimal.json")
+  values_path <- test_path("parse-values-decimal.json")
+
+  out <- bq_parse_file(schema_path, values_path)
+
+  expect_type(out$num, "double")
+  expect_type(out$bignum, "character")
+  expect_equal(out$num[1], 123456789.123456789, tolerance = 1e-9)
+  expect_true(is.na(out$num[2]))
+  expect_true(is.na(out$bignum[2]))
+  # Repeated and nested NUMERIC stay double in the default mode
+  expect_type(out$num_array[[1]], "double")
+  expect_equal(out$num_array[[1]], c(0.1, -2.5, 100))
+  expect_equal(out$num_array[[2]], numeric(0))
+  expect_type(out$rec[[1]]$n, "double")
+  expect_type(out$rec_array[[1]]$n[[1]], "double")
+})
+
+test_that("exact decimal mode keeps NUMERIC/BIGNUMERIC as canonical strings", {
+  schema_path <- test_path("parse-schema-decimal.json")
+  values_path <- test_path("parse-values-decimal.json")
+
+  out <- bq_parse_file(schema_path, values_path, exact_decimal = TRUE)
+
+  expect_type(out$num, "character")
+  expect_type(out$bignum, "character")
+  expect_identical(out$num, c(
+    "123456789.123456789",
+    NA,
+    "-0.000000001"
+  ))
+  expect_identical(out$bignum, c(
+    "12345678901234567890123456789.12345678901234567890123456789012345678",
+    NA,
+    "99999999999999999999999999999.999999999"
+  ))
+})
+
+test_that("exact decimal mode works inside repeated and nested fields", {
+  schema_path <- test_path("parse-schema-decimal.json")
+  values_path <- test_path("parse-values-decimal.json")
+
+  out <- bq_parse_file(schema_path, values_path, exact_decimal = TRUE)
+
+  # Repeated NUMERIC
+  expect_identical(out$num_array[[1]], c("0.1", "-2.5", "100"))
+  expect_identical(out$num_array[[2]], character(0))
+  expect_identical(out$num_array[[3]], "1")
+
+  # Nested record
+  expect_identical(out$rec[[1]]$n, "3.141592653589793238")
+  expect_true(is.na(out$rec[[1]]$b))
+  expect_true(is.na(out$rec[[3]]$n))
+  expect_identical(out$rec[[3]]$b, "7.7")
+
+  # Repeated record containing a repeated NUMERIC
+  expect_identical(out$rec_array[[1]]$n[[1]], c("1.1", "2.2"))
+  expect_identical(out$rec_array[[1]]$n[[2]], "3.3")
+  expect_equal(nrow(out$rec_array[[2]]), 0)
+  expect_true(is.na(out$rec_array[[3]]$n[[1]]))
+})
+
+test_that("bq_parse_single honours exact_decimal", {
+  expect_type(bq_parse_single("1.23456789", "numeric"), "double")
+  expect_identical(
+    bq_parse_single("1.23456789", "numeric", exact_decimal = TRUE),
+    "1.23456789"
+  )
+  expect_identical(
+    bq_parse_single(
+      "12345678901234567890123456789.123456789",
+      "bignumeric",
+      exact_decimal = TRUE
+    ),
+    "12345678901234567890123456789.123456789"
+  )
+
+  na_num <- bq_parse_single(NULL, "numeric", exact_decimal = TRUE)
+  expect_identical(na_num, NA_character_)
+  na_big <- bq_parse_single(NULL, "bignumeric", exact_decimal = TRUE)
+  expect_identical(na_big, NA_character_)
+
+  repeated <- bq_parse_single(
+    vs("1.1", "2.2"),
+    "numeric",
+    mode = "repeated",
+    exact_decimal = TRUE
+  )
+  expect_identical(repeated, list(c("1.1", "2.2")))
+})

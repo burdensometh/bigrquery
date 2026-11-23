@@ -88,3 +88,11 @@
       Error in `as_bq_table()`:
       ! `name` must be a string or a dbplyr_table_ident.
 
+# dbConnect() stores the decimal setting
+
+    Code
+      DBI::dbConnect(bigquery(), project = "p", decimal = "nope")
+    Condition
+      Error in `.local()`:
+      ! `decimal` must be one of "double" or "character", not "nope".
+

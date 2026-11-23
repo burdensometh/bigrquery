@@ -70,6 +70,14 @@ setClass("BigQueryDriver", contains = "DBIDriver")
 #'   The default is `"integer"` which returns R's `integer` type but results in `NA` for
 #'   values above/below +/- 2147483647. `"integer64"` returns a [bit64::integer64],
 #'   which allows the full range of 64 bit integers.
+#' @param decimal How BigQuery's `NUMERIC` and `BIGNUMERIC` types should be
+#'   read. The default `"double"` preserves the previous behaviour
+#'   (`NUMERIC` becomes R `double`, `BIGNUMERIC` becomes `character`).
+#'   Use `"character"` to receive both types as their exact canonical string
+#'   representations, including for fields nested inside records and repeated
+#'   fields. This allows exact row-by-row string reconciliation and preserves
+#'   values outside the range/precision of R doubles; missing values remain
+#'   `NA`. Only applies to downloads via the JSON API.
 #' @param ... Other arguments for compatibility with generic; currently ignored.
 #' @export
 setMethod(
@@ -84,6 +92,7 @@ setMethod(
     quiet = NA,
     use_legacy_sql = FALSE,
     bigint = c("integer", "integer64", "numeric", "character"),
+    decimal = c("double", "character"),
     labels = getOption("bigrquery.labels"),
     ...
   ) {
@@ -94,6 +103,7 @@ setMethod(
     check_bool(quiet, allow_na = TRUE)
     check_bool(use_legacy_sql)
     bigint <- arg_match(bigint)
+    decimal <- arg_match(decimal)
     check_labels(labels, call = quote(dbConnect()))
 
     BigQueryConnection(
@@ -104,6 +114,7 @@ setMethod(
       quiet = quiet,
       use_legacy_sql = use_legacy_sql,
       bigint = bigint,
+      decimal = decimal,
       labels = labels
     )
   }

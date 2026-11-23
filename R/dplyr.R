@@ -213,6 +213,7 @@ collect.tbl_BigQueryConnection <- function(
 
   quiet <- if (n < 100) TRUE else con@quiet
   bigint <- con@bigint %||% "integer"
+  decimal <- con@decimal %||% "double"
 
   if (api == "arrow") {
     out <- bq_table_download(
@@ -231,6 +232,7 @@ collect.tbl_BigQueryConnection <- function(
       quiet = quiet,
       max_connections = max_connections,
       bigint = bigint,
+      decimal = decimal,
       api = "json"
     )
   }

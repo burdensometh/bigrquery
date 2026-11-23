@@ -6,32 +6,32 @@
 #include <R_ext/Visibility.h>
 
 // BqField.cpp
-SEXP bq_parse(std::string meta_s, std::string data_s);
-extern "C" SEXP _bigrquery_bq_parse(SEXP meta_s, SEXP data_s) {
+SEXP bq_parse(std::string meta_s, std::string data_s, bool exact_decimal_);
+extern "C" SEXP _bigrquery_bq_parse(SEXP meta_s, SEXP data_s, SEXP exact_decimal_) {
   BEGIN_CPP11
-    return cpp11::as_sexp(bq_parse(cpp11::as_cpp<cpp11::decay_t<std::string>>(meta_s), cpp11::as_cpp<cpp11::decay_t<std::string>>(data_s)));
+    return cpp11::as_sexp(bq_parse(cpp11::as_cpp<cpp11::decay_t<std::string>>(meta_s), cpp11::as_cpp<cpp11::decay_t<std::string>>(data_s), cpp11::as_cpp<cpp11::decay_t<bool>>(exact_decimal_)));
   END_CPP11
 }
 // BqField.cpp
-SEXP bq_field_init(std::string json, std::string value);
-extern "C" SEXP _bigrquery_bq_field_init(SEXP json, SEXP value) {
+SEXP bq_field_init(std::string json, std::string value, bool exact_decimal_);
+extern "C" SEXP _bigrquery_bq_field_init(SEXP json, SEXP value, SEXP exact_decimal_) {
   BEGIN_CPP11
-    return cpp11::as_sexp(bq_field_init(cpp11::as_cpp<cpp11::decay_t<std::string>>(json), cpp11::as_cpp<cpp11::decay_t<std::string>>(value)));
+    return cpp11::as_sexp(bq_field_init(cpp11::as_cpp<cpp11::decay_t<std::string>>(json), cpp11::as_cpp<cpp11::decay_t<std::string>>(value), cpp11::as_cpp<cpp11::decay_t<bool>>(exact_decimal_)));
   END_CPP11
 }
 // BqField.cpp
-SEXP bq_parse_files(std::string schema_path, std::vector<std::string> file_paths, int n, bool quiet);
-extern "C" SEXP _bigrquery_bq_parse_files(SEXP schema_path, SEXP file_paths, SEXP n, SEXP quiet) {
+SEXP bq_parse_files(std::string schema_path, std::vector<std::string> file_paths, int n, bool quiet, bool exact_decimal_);
+extern "C" SEXP _bigrquery_bq_parse_files(SEXP schema_path, SEXP file_paths, SEXP n, SEXP quiet, SEXP exact_decimal_) {
   BEGIN_CPP11
-    return cpp11::as_sexp(bq_parse_files(cpp11::as_cpp<cpp11::decay_t<std::string>>(schema_path), cpp11::as_cpp<cpp11::decay_t<std::vector<std::string>>>(file_paths), cpp11::as_cpp<cpp11::decay_t<int>>(n), cpp11::as_cpp<cpp11::decay_t<bool>>(quiet)));
+    return cpp11::as_sexp(bq_parse_files(cpp11::as_cpp<cpp11::decay_t<std::string>>(schema_path), cpp11::as_cpp<cpp11::decay_t<std::vector<std::string>>>(file_paths), cpp11::as_cpp<cpp11::decay_t<int>>(n), cpp11::as_cpp<cpp11::decay_t<bool>>(quiet), cpp11::as_cpp<cpp11::decay_t<bool>>(exact_decimal_)));
   END_CPP11
 }
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
-    {"_bigrquery_bq_field_init",  (DL_FUNC) &_bigrquery_bq_field_init,  2},
-    {"_bigrquery_bq_parse",       (DL_FUNC) &_bigrquery_bq_parse,       2},
-    {"_bigrquery_bq_parse_files", (DL_FUNC) &_bigrquery_bq_parse_files, 4},
+    {"_bigrquery_bq_field_init",  (DL_FUNC) &_bigrquery_bq_field_init,  3},
+    {"_bigrquery_bq_parse",       (DL_FUNC) &_bigrquery_bq_parse,       3},
+    {"_bigrquery_bq_parse_files", (DL_FUNC) &_bigrquery_bq_parse_files, 5},
     {NULL, NULL, 0}
 };
 }
