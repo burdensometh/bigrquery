@@ -1,5 +1,20 @@
 # bigrquery (development version)
 
+## Time zone handling
+
+* BigQuery `DATETIME` columns are now returned as clock `naive-time` vectors
+  (timezone-less wall-clock times) instead of `POSIXct` values labelled with
+  UTC. The old behaviour reinterpreted local business times as UTC, which
+  shifted values near midnight onto the adjacent calendar day and made
+  daylight-saving-time gap times ambiguous. `TIMESTAMP` columns continue to
+  return `POSIXct` with time zone `"UTC"`, so the two types are now clearly
+  distinct and rows group by their original business day using
+  `clock::as_date()`.
+* Uploading a clock `naive-time` vector writes its local value verbatim to a
+  `DATETIME` field (via both the JSON and Parquet upload paths), and query
+  parameters created from one are typed `DATETIME` with no UTC conversion.
+  `POSIXt` vectors still map to `TIMESTAMP` as before.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).

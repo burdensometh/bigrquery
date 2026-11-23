@@ -1,3 +1,79 @@
+test_that("export_json keeps DATETIME local while TIMESTAMP stays an instant", {
+  library(clock)
+  df <- data.frame(
+    business_dt = naive_time_parse(
+      c("2025-03-09T23:30:00", "2025-03-10T00:30:00.123456"),
+      precision = "microsecond"
+    ),
+    event_ts = as.POSIXct(
+      c("2025-03-09 23:30:00", "2025-03-10 00:30:00"),
+      tz = "UTC"
+    )
+  )
+
+  lines <- strsplit(export_json(df), "\n")[[1]]
+
+  expect_match(lines[[1]], '"business_dt":"2025-03-09 23:30:00.000000"')
+  expect_match(lines[[1]], '"event_ts":"2025-03-09 23:30:00.000000"')
+  expect_match(lines[[2]], '"business_dt":"2025-03-10 00:30:00.123456"')
+})
+
+test_that("export_json writes DATETIME NAs as JSON null", {
+  library(clock)
+  df <- data.frame(
+    business_dt = naive_time_parse(
+      c("2025-03-09T23:30:00", NA),
+      precision = "microsecond"
+    )
+  )
+
+  lines <- strsplit(export_json(df), "\n")[[1]]
+  expect_match(lines[[1]], '"business_dt":"2025-03-09 23:30:00.000000"')
+  expect_match(lines[[2]], '"business_dt":null')
+})
+
+test_that("DATETIME parameters serialise with their local value and type", {
+  library(clock)
+  nt <- naive_time_parse(
+    c("2025-03-09T23:30:00", "2025-03-10T00:30:00.123456"),
+    precision = "microsecond"
+  )
+
+  scalar <- bq_param_scalar(nt[1], name = "x")
+  expect_equal(scalar$type, "DATETIME")
+  scalar_json <- jsonlite::toJSON(as_json(scalar), auto_unbox = TRUE)
+  expect_match(
+    scalar_json,
+    '"parameterType":{"type":"DATETIME"}',
+    fixed = TRUE
+  )
+  expect_match(scalar_json, '"value":"2025-03-09 23:30:00.000000"', fixed = TRUE)
+
+  array <- bq_param_array(nt, name = "x")
+  expect_equal(array$type, "DATETIME")
+  json <- jsonlite::toJSON(as_json(array), auto_unbox = TRUE)
+  expect_match(json, '"type":"ARRAY"')
+  expect_match(json, '"2025-03-09 23:30:00.000000"')
+  expect_match(json, '"2025-03-10 00:30:00.123456"')
+})
+
+test_that("data_type distinguishes DATETIME from TIMESTAMP", {
+  library(clock)
+  expect_equal(
+    data_type(naive_time_parse("2025-03-09T23:30:00", precision = "microsecond")),
+    "DATETIME"
+  )
+  expect_equal(data_type(as.POSIXct("2025-03-09 23:30:00", tz = "UTC")), "TIMESTAMP")
+
+  df <- data.frame(
+    x = naive_time_parse("2025-03-09T23:30:00", precision = "microsecond"),
+    y = as.POSIXct("2025-03-09 23:30:00", tz = "UTC")
+  )
+  fields <- as_bq_fields(df)
+  expect_equal(fields[[1]]$type, "DATETIME")
+  expect_equal(fields[[2]]$type, "TIMESTAMP")
+})
+
 test_that("bq_perform_upload creates job that succeeds", {
   withr::local_options(cli.progress_show_after = Inf)
 

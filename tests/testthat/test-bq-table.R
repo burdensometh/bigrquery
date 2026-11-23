@@ -86,24 +86,33 @@ test_that("can round trip atomic vectors", {
   expect_equal(df1, df2)
 })
 
-test_that("can round-trip POSIXt to either TIMESTAMP or DATETIME", {
-  df <- tibble(datetime = as.POSIXct("2020-01-01 09:00", tz = "UTC"))
+test_that("can round-trip POSIXt to TIMESTAMP and naive-time to DATETIME", {
+  psx <- tibble(datetime = as.POSIXct("2020-01-01 09:00", tz = "UTC"))
 
   tb1 <- bq_table_create(
     bq_test_table(),
     bq_fields(list(bq_field("datetime", "TIMESTAMP")))
   )
-  bq_table_upload(tb1, df)
+  bq_table_upload(tb1, psx)
   df1 <- bq_table_download(tb1, api = "json")
-  expect_equal(df1, df)
+  expect_s3_class(df1$datetime, "POSIXct")
+  expect_equal(df1, psx)
 
+  # A timezone-less local time stays local through a DATETIME round trip.
+  naive <- tibble(
+    datetime = clock::naive_time_parse(
+      "2020-01-01T09:00:00",
+      precision = "microsecond"
+    )
+  )
   tb2 <- bq_table_create(
     bq_test_table(),
     bq_fields(list(bq_field("datetime", "DATETIME")))
   )
-  bq_table_upload(tb2, df)
+  bq_table_upload(tb2, naive)
   df2 <- bq_table_download(tb2, api = "json")
-  expect_equal(df2, df)
+  expect_s3_class(df2$datetime, "clock_naive_time")
+  expect_equal(df2, naive)
 })
 
 test_that("can round trip data frame with list-cols", {

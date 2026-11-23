@@ -299,8 +299,19 @@ test_that("can convert date time types", {
   df <- bq_table_download(tb, api = "json")
 
   base <- ISOdatetime(2000, 1, 2, 3, 4, 5.67, tz = "UTC")
+  base_naive <- clock::naive_time_parse(
+    "2000-01-02T03:04:05.670000",
+    precision = "microsecond"
+  )
 
-  expect_equal(df$datetime, base)
+  # DATETIME is timezone-less wall time; TIMESTAMP is a UTC instant.
+  expect_s3_class(df$datetime, "clock_naive_time")
+  expect_equal(df$datetime, base_naive)
+  expect_equal(
+    bq_datetime_format(df$datetime),
+    "2000-01-02 03:04:05.670000"
+  )
+  expect_s3_class(df$timestamp, "POSIXct")
   expect_equal(df$timestamp, base)
   expect_equal(df$date, as.Date(base))
   expect_equal(df$time, hms::hms(hours = 3, minutes = 4, seconds = 5.67))
@@ -313,8 +324,116 @@ test_that("can parse fractional seconds", {
     "2000-01-02T03:04:05",
     "2000-01-02T03:04:05.123456"
   )
-  parsed <- as.numeric(bq_datetime_parse(x))
-  expect_equal(parsed - trunc(parsed), c(0.67, 0, 0.123456), tolerance = 1e-6)
+  parsed <- bq_datetime_parse(x)
+  expect_s3_class(parsed, "clock_naive_time")
+  expect_false(inherits(parsed, "POSIXt"))
+  expect_null(attr(parsed, "tzone"))
+
+  # Microsecond precision is retained, including for shorter fraction strings.
+  ymd <- clock::as_year_month_day(parsed)
+  expect_equal(clock::get_microsecond(ymd), c(670000L, 0L, 123456L))
+})
+
+test_that("DATETIME keeps the local wall-clock value with no time zone", {
+  # Both separators accepted: the REST API uses a space, ISO 8601 uses "T".
+  x <- c("2000-03-09 02:30:00", "2000-03-09T02:30:00.5")
+  parsed <- bq_datetime_parse(x)
+
+  expect_equal(
+    bq_datetime_format(parsed),
+    c("2000-03-09 02:30:00.000000", "2000-03-09 02:30:00.500000")
+  )
+  # The value is independent of the session time zone.
+  expect_equal(clock::as_date(parsed), rep(as.Date("2000-03-09"), 2))
+  expect_equal(
+    clock::get_hour(clock::as_year_month_day(parsed)),
+    c(2L, 2L)
+  )
+})
+
+test_that("DATETIME survives the date rollover at local midnight", {
+  # These are naive business times, so grouping must follow the printed
+  # calendar day rather than any UTC conversion.
+  x <- c(
+    "2025-03-09 23:59:59",
+    "2025-03-10 00:00:00",
+    "2025-03-10 00:30:00"
+  )
+  parsed <- bq_datetime_parse(x)
+  days <- clock::as_date(parsed)
+
+  expect_equal(as.character(days), c("2025-03-09", "2025-03-10", "2025-03-10"))
+  expect_equal(as.integer(tapply(seq_along(x), days, length)), c(1L, 2L))
+})
+
+test_that("DATETIME keeps nonexistent DST-gap wall times verbatim", {
+  # 02:30 did not exist in America/New_York on 2025-03-09 (spring forward),
+  # but a timezone-less DATETIME must store it anyway.
+  withr::local_timezone("America/New_York")
+
+  parsed <- bq_datetime_parse(c(
+    "2025-03-09 01:30:00",
+    "2025-03-09 02:30:00",
+    "2025-03-09 03:30:00"
+  ))
+
+  expect_equal(
+    bq_datetime_format(parsed),
+    c(
+      "2025-03-09 01:30:00.000000",
+      "2025-03-09 02:30:00.000000",
+      "2025-03-09 03:30:00.000000"
+    )
+  )
+  expect_equal(
+    clock::as_date(parsed),
+    rep(as.Date("2025-03-09"), 3)
+  )
+})
+
+test_that("DATETIME and TIMESTAMP stay distinct in the same table", {
+  schema <- jsonlite::toJSON(
+    list(
+      schema = list(fields = list(
+        list(name = "business_dt", type = "DATETIME"),
+        list(name = "event_ts", type = "TIMESTAMP")
+      ))
+    ),
+    auto_unbox = TRUE
+  )
+  values <- paste0(
+    '{"rows":[',
+    '{"f":[{"v":"2025-03-09 23:30:00"},{"v":"1741563000"}]},',
+    '{"f":[{"v":"2025-03-10 00:30:00.123456"},{"v":"1741566600.5"}]},',
+    '{"f":[{"v":null},{"v":null}]}',
+    "]}",
+    collapse = ""
+  )
+
+  df <- parse_postprocess(bq_parse(schema, values), bigint = "integer")
+
+  expect_s3_class(df$business_dt, "clock_naive_time")
+  expect_false(inherits(df$business_dt, "POSIXt"))
+  expect_s3_class(df$event_ts, "POSIXct")
+  expect_equal(attr(df$event_ts, "tzone"), "UTC")
+
+  expect_equal(
+    bq_datetime_format(df$business_dt),
+    c(
+      "2025-03-09 23:30:00.000000",
+      "2025-03-10 00:30:00.123456",
+      NA
+    )
+  )
+  expect_true(is.na(df$business_dt[3]))
+  expect_true(is.na(df$event_ts[3]))
+
+  # Grouping by the naive business day follows the printed local date.
+  business_day <- clock::as_date(df$business_dt)
+  expect_equal(
+    as.character(business_day[1:2]),
+    c("2025-03-09", "2025-03-10")
+  )
 })
 
 test_that("correctly parse logical values", {

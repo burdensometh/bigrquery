@@ -152,6 +152,12 @@ data_type <- function(x) {
   if (is.factor(x)) {
     return("STRING")
   }
+  # A clock naive-time is a timezone-less wall clock time and therefore maps to
+  # BigQuery DATETIME. It must be checked before POSIXt, which represents a
+  # specific instant and maps to TIMESTAMP.
+  if (clock::is_naive_time(x)) {
+    return("DATETIME")
+  }
   if (inherits(x, "POSIXt")) {
     return("TIMESTAMP")
   }

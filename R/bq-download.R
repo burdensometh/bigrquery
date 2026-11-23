@@ -31,6 +31,19 @@
 #' * Records will become list-columns of named lists.
 #' * Repeated records will become list-columns of data frames.
 #'
+#' BigQuery's two date-time types are mapped to distinct R types so that the
+#' timezone-less business time is never confused with a specific instant:
+#'
+#' * `DATETIME` (a wall-clock time with no time zone) becomes a clock
+#'   `naive-time` vector. The local value is preserved verbatim, including
+#'   values that fall in a daylight-saving-time gap, so rows group by their
+#'   printed business day without any UTC shift.
+#' * `TIMESTAMP` (an absolute instant) becomes a `POSIXct` with time zone
+#'   `"UTC"`.
+#'
+#' Use [clock::as_date()] on a `naive-time` column to group by business day;
+#' the column can be uploaded again to a `DATETIME` field without conversion.
+#'
 #' @return Because data retrieval may generate list-columns and the `data.frame`
 #'   print method can have problems with list-columns, this method returns
 #'   a tibble. If you need a `data.frame`, coerce the results with
@@ -289,37 +302,46 @@ parse_postprocess <- function(df, bigint) {
 }
 
 col_apply <- function(x, p, f) {
-  if (is.list(x)) {
+  if (p(x)) {
+    f(x)
+  } else if (is.list(x) && !inherits(x, "vctrs_vctr")) {
+    # Recurse into ordinary list-columns (nested records/repeated values), but
+    # never into a vectorised vctrs type such as clock's naive-time: those are
+    # list-typed internally but are atomic columns, not containers to descend
+    # into, and recursing would loop forever.
     x[] <- lapply(x, col_apply, p = p, f = f)
     x
-  } else if (p(x)) {
-    f(x)
   } else {
     x
   }
 }
 
 bq_datetime_parse <- function(x) {
-  # `format` matches clock already.
-  # Bigquery DATETIME is documented as microsecond precision.
+  # BigQuery DATETIME values are wall-clock ("naive") times with no time zone:
   # https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/data-types#datetime_type
-  x <- clock::year_month_day_parse(x, precision = "microsecond")
+  # They must be kept distinct from TIMESTAMP values, which represent a unique
+  # instant and are returned as POSIXct with a UTC time zone. Converting a
+  # DATETIME to a zoned POSIXct would reinterpret the local business time as
+  # UTC (or some other zone), shifting values near midnight onto the adjacent
+  # calendar day and corrupting grouping by business day. clock's naive-time
+  # type stores the local value verbatim, with the documented microsecond
+  # precision, so no zone conversion ever happens.
+  #
+  # BigQuery renders DATETIME with a space separator (e.g.
+  # "2000-01-02 03:04:05.670000") while clock's default parser expects "T";
+  # the fractional seconds themselves are parsed flexibly (0-6 digits).
+  x <- sub(" ", "T", x, fixed = TRUE)
+  clock::naive_time_parse(x, precision = "microsecond")
+}
 
-  # Manually retain microseconds for the POSIXct
-  microseconds <- clock::get_microsecond(x)
-  microseconds <- microseconds / 1000000
-
-  # Convert to POSIXct at second precision since that is what clock asserts
-  # the precision of a POSIXct is. Can use sys-time since we are going straight
-  # to UTC.
-  x <- clock::calendar_narrow(x, "second")
-  x <- clock::as_sys_time(x)
-  x <- as.POSIXct(x, tz = "UTC")
-
-  # Manually add microseconds back on (lossy, floating point issues!)
-  x <- x + microseconds
-
-  x
+bq_datetime_format <- function(x) {
+  # Inverse of bq_datetime_parse(): render a timezone-less naive-time in the
+  # canonical BigQuery DATETIME literal form (space separator, microsecond
+  # precision). `format()` preserves NAs as the string "NA", so restore real
+  # NA_character_ values for serialisation to JSON null.
+  out <- format(x)
+  out[is.na(x)] <- NA_character_
+  sub("T", " ", out, fixed = TRUE)
 }
 
 set_row_params <- function(nrow, n_max = Inf, start_index = 0L) {

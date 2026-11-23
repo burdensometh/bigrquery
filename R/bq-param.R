@@ -90,14 +90,16 @@ as_json.bq_param_scalar <- function(x) {
   list(
     name = x$name,
     parameterType = list(type = unbox(x$type)),
-    parameterValue = list(value = unbox(x$value))
+    parameterValue = list(value = unbox(bq_param_value(x$value)))
   )
 }
 
 #' @export
 as_json.bq_param_array <- function(x) {
   values <- unname(c(x$value))
-  values <- lapply(values, function(x) list(value = unbox(x)))
+  values <- lapply(values, function(x) {
+    list(value = unbox(bq_param_value(x)))
+  })
   list(
     name = x$name,
     parameterType = list(
@@ -106,6 +108,18 @@ as_json.bq_param_array <- function(x) {
     ),
     parameterValue = list(arrayValues = values)
   )
+}
+
+# Serialise an R parameter value into the JSON representation expected by the
+# BigQuery API. A clock naive-time (DATETIME) is a timezone-less wall clock
+# time, so its local value is emitted verbatim rather than being treated as an
+# instant and converted to UTC.
+bq_param_value <- function(value) {
+  if (clock::is_naive_time(value)) {
+    bq_datetime_format(value)
+  } else {
+    value
+  }
 }
 
 #' @export

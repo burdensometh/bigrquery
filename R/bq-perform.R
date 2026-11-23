@@ -188,6 +188,11 @@ bq_perform_upload <- function(
     )
   } else {
     # https://docs.cloud.google.com/bigquery/docs/loading-data-cloud-storage-parquet?hl=es-419
+    # nanoparquet has no representation for clock's timezone-less naive-time,
+    # so render DATETIME columns as canonical strings, which BigQuery parses
+    # into the target DATETIME column without any time-zone conversion.
+    is_datetime <- vapply(values, clock::is_naive_time, logical(1))
+    values[is_datetime] <- lapply(values[is_datetime], bq_datetime_format)
     media <- list(
       "type" = "application/vnd.apache.parquet",
       "content" = nanoparquet::write_parquet(values, ":raw:")
@@ -214,6 +219,12 @@ export_json <- function(values, json_digits = NULL) {
   values[is_time] <- lapply(values[is_time], function(x) {
     format(x, "%Y-%m-%d %H:%M:%OS6", tz = "UTC")
   })
+
+  # DATETIME columns have no time zone, so their local wall-clock value must be
+  # emitted verbatim rather than converted to UTC (which is what would happen
+  # if they were treated as POSIXt). See bq_datetime_parse() for the read side.
+  is_datetime <- vapply(values, clock::is_naive_time, logical(1))
+  values[is_datetime] <- lapply(values[is_datetime], bq_datetime_format)
 
   # Convert wk_wkt to text
   is_wk <- vapply(values, function(x) inherits(x, "wk_vctr"), logical(1))
