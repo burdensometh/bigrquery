@@ -243,3 +243,292 @@ test_that("can correctly print a lazy query", {
     )
   )
 })
+
+# compute() into an existing partitioned/clustered table --------------------
+
+# Sets up a destination table with the given partition and clustering fields
+# and the columns produced by the query, capturing the SQL that would be
+# submitted. Returns an environment whose `sql` is the submitted SQL, or `NULL`
+# when no job was submitted.
+local_compute_destination <- function(
+  columns,
+  partition = NULL,
+  clustering = NULL,
+  exists = TRUE,
+  env = caller_env()
+) {
+  capture <- new.env(parent = emptyenv())
+  capture$sql <- NULL
+
+  fields <- lapply(names(columns), function(name) {
+    type <- columns[[name]]
+    list(
+      name = name,
+      type = if (identical(type, "REPEATED")) "STRING" else type,
+      mode = if (identical(type, "REPEATED")) "REPEATED" else "NULLABLE"
+    )
+  })
+
+  meta <- list()
+  if (!is.null(partition)) {
+    meta$timePartitioning <- list(type = "DAY", field = partition)
+  }
+  if (!is.null(clustering)) {
+    meta$clustering <- list(fields = as.list(clustering))
+  }
+
+  local_mocked_bindings(
+    bq_table_exists = function(x) exists,
+    bq_table_meta = function(x, fields = NULL) meta,
+    bq_perform_query_schema = function(query, billing, ...) fields,
+    bq_dataset_query = function(
+      x,
+      query,
+      destination_table = NULL,
+      ...,
+      billing = NULL
+    ) {
+      capture$sql <- as.character(query)
+      bq_table("test", "test", "destination")
+    },
+    bq_project_query = function(x, query, destination_table = NULL, ...) {
+      capture$sql <- as.character(query)
+      bq_table("test", "test", "destination")
+    },
+    .env = env
+  )
+
+  capture
+}
+
+test_that("compute() validates the partition and clustering columns", {
+  con <- simulate_bigrquery()
+  sql <- dbplyr::sql("SELECT region_x, event_date, value FROM src")
+  columns <- list(region_x = "STRING", event_date = "DATE", value = "INTEGER")
+
+  # A column map resolves a differently named clustering column and renames it
+  # in the submitted query.
+  capture <- local_compute_destination(
+    columns,
+    partition = "event_date",
+    clustering = "region"
+  )
+  out <- db_compute.BigQueryConnection(
+    con,
+    I("test.test.destination"),
+    sql,
+    temporary = FALSE,
+    overwrite = TRUE,
+    column_map = c(region = "region_x")
+  )
+  expect_s3_class(out, "dbplyr_table_path")
+  expect_snapshot(cat(capture$sql))
+
+  # Without a map the clustering column isn't produced, so no job is submitted
+  capture <- local_compute_destination(
+    columns,
+    partition = "event_date",
+    clustering = "region"
+  )
+  expect_snapshot(
+    db_compute.BigQueryConnection(
+      con,
+      I("test.test.destination"),
+      sql,
+      temporary = FALSE,
+      overwrite = TRUE
+    ),
+    error = TRUE
+  )
+  expect_null(capture$sql)
+})
+
+test_that("compute() rejects invalid partition and clustering types", {
+  con <- simulate_bigrquery()
+  sql <- dbplyr::sql("SELECT * FROM src")
+
+  capture <- local_compute_destination(
+    list(day = "STRING", region = "STRING"),
+    partition = "day"
+  )
+  expect_snapshot(
+    db_compute.BigQueryConnection(
+      con,
+      I("test.test.destination"),
+      sql,
+      temporary = FALSE,
+      overwrite = TRUE
+    ),
+    error = TRUE
+  )
+  expect_null(capture$sql)
+
+  capture <- local_compute_destination(
+    list(day = "DATE", region = "BYTES"),
+    partition = "day",
+    clustering = "region"
+  )
+  expect_snapshot(
+    db_compute.BigQueryConnection(
+      con,
+      I("test.test.destination"),
+      sql,
+      temporary = FALSE,
+      overwrite = TRUE
+    ),
+    error = TRUE
+  )
+  expect_null(capture$sql)
+
+  capture <- local_compute_destination(
+    list(day = "REPEATED", region = "STRING"),
+    partition = "day"
+  )
+  expect_snapshot(
+    db_compute.BigQueryConnection(
+      con,
+      I("test.test.destination"),
+      sql,
+      temporary = FALSE,
+      overwrite = TRUE
+    ),
+    error = TRUE
+  )
+  expect_null(capture$sql)
+})
+
+test_that("compute() detects conflicting target column names", {
+  con <- simulate_bigrquery()
+  sql <- dbplyr::sql("SELECT * FROM src")
+
+  # Both query columns would be renamed to the same target `region`
+  capture <- local_compute_destination(
+    list(region_x = "STRING", region_y = "STRING"),
+    clustering = "region"
+  )
+  expect_snapshot(
+    db_compute.BigQueryConnection(
+      con,
+      I("test.test.destination"),
+      sql,
+      temporary = FALSE,
+      overwrite = TRUE,
+      column_map = c(region = "region_x", region = "region_y")
+    ),
+    error = TRUE
+  )
+  expect_null(capture$sql)
+})
+
+test_that("compute() maps same-named columns from different sources", {
+  con <- simulate_bigrquery()
+  # A join of two sources yields `region_x` and `region_y`; the destination
+  # expects a single `region` clustering column.
+  sql <- dbplyr::sql("SELECT region_x, region_y, day FROM src")
+  capture <- local_compute_destination(
+    list(region_x = "STRING", region_y = "STRING", day = "DATE"),
+    partition = "day",
+    clustering = "region"
+  )
+  expect_snapshot(
+    db_compute.BigQueryConnection(
+      con,
+      I("test.test.destination"),
+      sql,
+      temporary = FALSE,
+      overwrite = TRUE
+    ),
+    error = TRUE
+  )
+  expect_null(capture$sql)
+
+  out <- db_compute.BigQueryConnection(
+    con,
+    I("test.test.destination"),
+    sql,
+    temporary = FALSE,
+    overwrite = TRUE,
+    column_map = c(region = "region_x", unused_region = "region_y")
+  )
+  expect_s3_class(out, "dbplyr_table_path")
+  expect_snapshot(cat(capture$sql))
+})
+
+test_that("compute() rejects a duplicate source column name in the query", {
+  con <- simulate_bigrquery()
+  capture <- local_compute_destination(
+    list(region = "STRING", region = "STRING", day = "DATE"),
+    partition = "day"
+  )
+  expect_snapshot(
+    db_compute.BigQueryConnection(
+      con,
+      I("test.test.destination"),
+      dbplyr::sql("SELECT * FROM src"),
+      temporary = FALSE,
+      overwrite = TRUE
+    ),
+    error = TRUE
+  )
+  expect_null(capture$sql)
+})
+
+test_that("compute() accepts column_map as a data frame", {
+  con <- simulate_bigrquery()
+  sql <- dbplyr::sql("SELECT region_x, day FROM src")
+  capture <- local_compute_destination(
+    list(region_x = "STRING", day = "DATE"),
+    partition = "day",
+    clustering = "region"
+  )
+  out <- db_compute.BigQueryConnection(
+    con,
+    I("test.test.destination"),
+    sql,
+    temporary = FALSE,
+    overwrite = TRUE,
+    column_map = data.frame(source = "region_x", target = "region")
+  )
+  expect_s3_class(out, "dbplyr_table_path")
+  expect_snapshot(cat(capture$sql))
+})
+
+test_that("compute() errors on a column_map naming an unknown column", {
+  con <- simulate_bigrquery()
+  capture <- local_compute_destination(
+    list(region = "STRING", day = "DATE"),
+    partition = "day"
+  )
+  expect_snapshot(
+    db_compute.BigQueryConnection(
+      con,
+      I("test.test.destination"),
+      dbplyr::sql("SELECT * FROM src"),
+      temporary = FALSE,
+      overwrite = TRUE,
+      column_map = c(area = "region_x")
+    ),
+    error = TRUE
+  )
+  expect_null(capture$sql)
+})
+
+test_that("compute() doesn't validate when the destination is new", {
+  con <- simulate_bigrquery()
+  sql <- dbplyr::sql("SELECT * FROM src")
+
+  capture <- local_compute_destination(
+    list(value = "INTEGER"),
+    partition = "day",
+    exists = FALSE
+  )
+  out <- db_compute.BigQueryConnection(
+    con,
+    I("test.test.destination"),
+    sql,
+    temporary = FALSE,
+    overwrite = TRUE
+  )
+  expect_s3_class(out, "dbplyr_table_path")
+  expect_snapshot(cat(capture$sql))
+})

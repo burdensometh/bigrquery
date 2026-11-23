@@ -1,5 +1,7 @@
 # bigrquery (development version)
 
+* `compute()` (and hence `db_compute()`) now validates the columns a query writes against the partition and clustering fields of an existing destination table before submitting the job, so a table is no longer replaced when the query can't be written to it. A new `column_map` argument (a `c(target = "source")` vector, like `dplyr::rename()`) resolves query columns that are named differently from the destination, and conflicting column names raise an error that names the clashing columns. `compute(overwrite = TRUE, temporary = FALSE)` now truncates the existing table, as dbplyr expects.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).

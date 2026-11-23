@@ -78,6 +78,16 @@ tbl.BigQueryConnection <- function(src, from, ...) {
 dbplyr_edition.BigQueryConnection <- function(con) 2L
 
 # registered onLoad
+#
+# `column_map` names the columns the query produces, using the same
+# `target = source` shape as `dplyr::rename()`:
+# * a named character vector, e.g. `c(region = "region_x")`, or
+# * a two column data frame with columns `source` and `target`.
+#
+# It resolves columns whose names differ between the query and the destination
+# table, and disambiguates same-named columns coming from different sources.
+# Both the mapping and the query's projected columns are checked against the
+# destination's partition and clustering fields before the job is submitted.
 db_compute.BigQueryConnection <- function(
   con,
   table,
@@ -88,24 +98,65 @@ db_compute.BigQueryConnection <- function(
   unique_indexes = list(),
   indexes = list(),
   analyze = TRUE,
-  in_transaction = FALSE
+  in_transaction = FALSE,
+  column_map = NULL
 ) {
+  call <- caller_env()
+  destination_table <- if (!temporary) as_bq_table(con, table)
+  write_disposition <- if (!temporary && overwrite) {
+    "WRITE_TRUNCATE"
+  } else {
+    "WRITE_EMPTY"
+  }
+
+  # Validate the projection against the destination *before* submitting the
+  # job, so that an existing destination table is never replaced when the query
+  # can't be written to it.
+  partition_field <- NULL
+  clustering_fields <- character()
+  if (!temporary && bq_table_exists(destination_table)) {
+    meta <- bq_table_meta(
+      destination_table,
+      fields = "timePartitioning,clustering"
+    )
+    partition_field <- meta$timePartitioning$field
+    clustering_fields <- unlist(meta$clustering$fields, use.names = FALSE)
+  }
+  needs_validation <- (is_string(partition_field) && nzchar(partition_field)) ||
+    length(clustering_fields) > 0
+
+  if (needs_validation || !is.null(column_map)) {
+    projection <- bq_compute_projection(con, sql, call = call)
+    projection <- bq_compute_column_map(projection, column_map, call = call)
+
+    if (needs_validation) {
+      bq_compute_check_destination(
+        destination_table,
+        partition_field,
+        clustering_fields,
+        projection,
+        call = call
+      )
+    }
+
+    sql <- bq_compute_alias_sql(con, sql, projection)
+  }
+
   if (is.null(con@dataset)) {
-    destination_table <- if (!temporary) as_bq_table(con, table)
     tb <- bq_project_query(
       con@project,
       sql,
       destination_table = destination_table,
+      write_disposition = write_disposition,
       labels = con@labels
     )
   } else {
     ds <- bq_dataset(con@project, con@dataset)
-    destination_table <- if (!temporary) as_bq_table(con, table)
-
     tb <- bq_dataset_query(
       ds,
       query = sql,
       destination_table = destination_table,
+      write_disposition = write_disposition,
       labels = con@labels
     )
   }
@@ -114,6 +165,326 @@ db_compute.BigQueryConnection <- function(
     I(paste(tb$project, tb$dataset, tb$table, sep = ".")),
     con
   )
+}
+
+# The schema of the query result, as it would be written to the destination
+# table. A dry run reports the projected column names and types without
+# reading any data. Billing matches the job that will actually be submitted.
+bq_compute_projection <- function(con, sql, call = caller_env()) {
+  default_dataset <- if (is.null(con@dataset)) NULL else as_bq_dataset(con)
+  fields <- tryCatch(
+    bq_perform_query_schema(
+      sql,
+      billing = con@project,
+      default_dataset = default_dataset,
+      labels = con@labels
+    ),
+    error = function(cnd) {
+      msg <- conditionMessage(cnd)
+      if (grepl("duplicate column", msg, ignore.case = TRUE)) {
+        cli::cli_abort(
+          c(
+            "Can't materialise the query: it produces duplicate column names.",
+            i = "Rename the conflicting columns in the query so each output
+                 column has a distinct name."
+          ),
+          class = "bigrquery_compute_column_conflict",
+          call = call
+        )
+      }
+      stop(cnd)
+    }
+  )
+
+  if (length(fields) == 0) {
+    cli::cli_abort(
+      "Can't determine the columns produced by the query.",
+      call = call
+    )
+  }
+
+  data.frame(
+    source = vapply(fields, function(x) x$name, character(1)),
+    type = vapply(fields, function(x) x$type %||% "STRING", character(1)),
+    repeated = vapply(
+      fields,
+      function(x) identical(x$mode %||% "NULLABLE", "REPEATED"),
+      logical(1)
+    ),
+    stringsAsFactors = FALSE
+  )
+}
+
+# Resolve the caller's `target = source` mapping against the projection, adding
+# a `target` column that holds the name each projected column will be written
+# under. Detects conflicting names coming from different sources.
+bq_compute_column_map <- function(
+  projection,
+  column_map,
+  call = caller_env()
+) {
+  duplicated_source <- unique(projection$source[
+    duplicated(projection$source)
+  ])
+  if (length(duplicated_source) > 0) {
+    cli::cli_abort(
+      c(
+        "Can't materialise the query: it produces the column name{?s}
+         {.field {duplicated_source}} more than once.",
+        i = "Rename the columns in the query so each output column has a
+             distinct name."
+      ),
+      class = "bigrquery_compute_column_conflict",
+      call = call
+    )
+  }
+
+  projection$target <- projection$source
+  if (is.null(column_map)) {
+    return(projection)
+  }
+
+  column_map <- as_bq_compute_column_map(column_map, projection$source, call)
+  matched <- match(projection$source, unname(column_map))
+  projection$target[!is.na(matched)] <- names(column_map)[matched[
+    !is.na(matched)
+  ]]
+
+  duplicated_target <- unique(projection$target[
+    duplicated(projection$target)
+  ])
+  if (length(duplicated_target) > 0) {
+    sources <- projection$source[projection$target %in% duplicated_target]
+    cli::cli_abort(
+      c(
+        "Can't materialise the query: multiple columns map to the target
+         column{?s} {.field {duplicated_target}}.",
+        x = "Conflicting source column{?s}: {.field {sources}}.",
+        i = "Map each source column to a different target column."
+      ),
+      class = "bigrquery_compute_column_conflict",
+      call = call
+    )
+  }
+
+  projection
+}
+
+# Coerce `column_map` to a named vector of `target = source`. A two column data
+# frame names its columns `source` and `target`.
+as_bq_compute_column_map <- function(column_map, source, call) {
+  if (is.data.frame(column_map)) {
+    if (ncol(column_map) != 2) {
+      cli::cli_abort(
+        "When a data frame, {.arg column_map} must have exactly two columns.",
+        call = call
+      )
+    }
+    names(column_map) <- tolower(names(column_map))
+    if (!all(c("source", "target") %in% names(column_map))) {
+      cli::cli_abort(
+        c(
+          "When a data frame, {.arg column_map} must have {.field source} and
+           {.field target} columns.",
+          i = "Got columns {.field {names(column_map)}}."
+        ),
+        call = call
+      )
+    }
+    column_map <- setNames(
+      as.character(column_map$source),
+      as.character(column_map$target)
+    )
+  }
+
+  check_character(column_map, allow_na = FALSE, call = call)
+  if (is.null(names(column_map))) {
+    cli::cli_abort(
+      c(
+        "{.arg column_map} must be named.",
+        i = "Use a vector like {.code c(target_column = \"query_column\")}."
+      ),
+      call = call
+    )
+  }
+
+  target <- names(column_map)
+  if (any(!nzchar(target)) || any(!nzchar(unname(column_map)))) {
+    cli::cli_abort(
+      "{.arg column_map} must not contain empty names or values.",
+      call = call
+    )
+  }
+  if (anyDuplicated(unname(column_map))) {
+    cli::cli_abort(
+      c(
+        "Can't materialise the query: {.arg column_map} maps the same query
+         column to more than one target.",
+        i = "Each query column can only map to one target column."
+      ),
+      class = "bigrquery_compute_column_conflict",
+      call = call
+    )
+  }
+
+  unknown <- setdiff(unname(column_map), source)
+  if (length(unknown) > 0) {
+    cli::cli_abort(
+      c(
+        "{.arg column_map} maps unknown column{?s} {.field {unknown}}.",
+        i = "The query produces the columns {.field {source}}."
+      ),
+      class = "bigrquery_compute_column_conflict",
+      call = call
+    )
+  }
+
+  column_map
+}
+
+# Validate the destination's time partition and clustering fields against the
+# columns the query will actually write.
+#
+# Type rules follow BigQuery:
+# * time partitioning requires a top-level DATE, DATETIME, or TIMESTAMP column;
+# * clustering requires a top-level, non-repeated, simple-type column, where
+#   the supported types are STRING, GEOGRAPHY, INT64, NUMERIC, BIGNUMERIC,
+#   DATE, DATETIME, TIMESTAMP, BOOL, and RANGE.
+# See https://cloud.google.com/bigquery/docs/reference/rest/v2/tables
+bq_compute_check_destination <- function(
+  table,
+  partition_field,
+  clustering_fields,
+  projection,
+  call = caller_env()
+) {
+  if (length(partition_field) == 1 && nzchar(partition_field)) {
+    bq_compute_check_field(
+      table,
+      partition_field,
+      projection,
+      role = "partition",
+      types = c("DATE", "DATETIME", "TIMESTAMP"),
+      call = call
+    )
+  }
+
+  for (field in clustering_fields) {
+    bq_compute_check_field(
+      table,
+      field,
+      projection,
+      role = "clustering",
+      types = c(
+        "STRING",
+        "GEOGRAPHY",
+        "INT64",
+        "NUMERIC",
+        "BIGNUMERIC",
+        "DATE",
+        "DATETIME",
+        "TIMESTAMP",
+        "BOOL",
+        "RANGE"
+      ),
+      call = call
+    )
+  }
+
+  invisible()
+}
+
+bq_compute_check_field <- function(
+  table,
+  field,
+  projection,
+  role,
+  types,
+  call = caller_env()
+) {
+  table_name <- toString(table)
+
+  i <- match(field, projection$target)
+  if (is.na(i)) {
+    cli::cli_abort(
+      c(
+        "Can't write to {.val {table_name}}: {role} column {.field {field}} is
+         not produced by the query.",
+        i = "The query produces the columns {.field {projection$target}}.",
+        i = "Map a query column to {.field {field}}, e.g.
+             {.code column_map = c({field} = \"column\")}."
+      ),
+      class = "bigrquery_compute_column_conflict",
+      call = call
+    )
+  }
+
+  if (projection$repeated[[i]]) {
+    cli::cli_abort(
+      c(
+        "Can't write to {.val {table_name}}: {role} column {.field {field}} is
+         a repeated field.",
+        i = "{role} columns must be a single value, not an array."
+      ),
+      class = "bigrquery_compute_invalid_type",
+      call = call
+    )
+  }
+
+  type <- bq_compute_normalize_type(projection$type[[i]])
+  if (!type %in% types) {
+    cli::cli_abort(
+      c(
+        "Can't write to {.val {table_name}}: {role} column {.field {field}}
+         has type {.val {type}}, which is not valid for {role}.",
+        i = "Valid types are {.and {.field {types}}}."
+      ),
+      class = "bigrquery_compute_invalid_type",
+      call = call
+    )
+  }
+
+  invisible()
+}
+
+bq_compute_normalize_type <- function(type) {
+  type <- toupper(type)
+  switch(
+    type,
+    INTEGER = "INT64",
+    FLOAT = "FLOAT64",
+    BOOLEAN = "BOOL",
+    RECORD = "STRUCT",
+    type
+  )
+}
+
+# Apply any renames in the mapping by aliasing the query's output columns. The
+# query is wrapped in a subquery so that the aliases refer to the exact result
+# that would otherwise have been written.
+bq_compute_alias_sql <- function(con, sql, projection) {
+  if (identical(projection$source, projection$target)) {
+    return(sql)
+  }
+
+  # A trailing semicolon would make the wrapped query invalid.
+  inner <- trimws(as.character(sql))
+  inner <- sub(";+$", "", inner)
+
+  quote <- \(x) as.character(DBI::dbQuoteIdentifier(con, x))
+  columns <- ifelse(
+    projection$source == projection$target,
+    quote(projection$source),
+    paste0(quote(projection$source), " AS ", quote(projection$target))
+  )
+
+  dbplyr::sql(paste0(
+    "SELECT ",
+    paste(columns, collapse = ", "),
+    "\nFROM (\n",
+    inner,
+    "\n)"
+  ))
 }
 
 # registered onLoad
