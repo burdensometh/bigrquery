@@ -57,6 +57,7 @@ Collate:
     'bq-auth.R'
     'bq-dataset.R'
     'bq-download.R'
+    'bq-export.R'
     'bq-field.R'
     'bq-job.R'
     'bq-param.R'

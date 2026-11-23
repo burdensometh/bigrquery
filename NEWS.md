@@ -1,5 +1,7 @@
 # bigrquery (development version)
 
+* New `bq_table_save_manifest()` and `bq_export_read()` support exports that are consumed by another process. `bq_table_save_manifest()` records the extract job identity and the exact list of objects produced by the run, verifies the shards against the job's reported file counts, and only then publishes a JSON manifest. It writes each run to a fresh prefix so re-runs cannot mix batches, and distinguishes an empty batch (`status = "empty"`) from a failed export, which publishes no manifest.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).
