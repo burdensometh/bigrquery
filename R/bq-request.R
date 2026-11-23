@@ -133,7 +133,7 @@ bq_delete <- function(url, ..., query = NULL, token = bq_token()) {
 
 #' @importFrom httr POST add_headers config
 bq_post <- function(url, body, ..., query = NULL, token = bq_token()) {
-  json <- jsonlite::toJSON(body, pretty = TRUE, auto_unbox = TRUE)
+  json <- bq_body_json(body)
 
   req <- POST(
     paste0(base_url, url),
@@ -149,7 +149,7 @@ bq_post <- function(url, body, ..., query = NULL, token = bq_token()) {
 
 #' @importFrom httr PATCH add_headers config
 bq_patch <- function(url, body, ..., query = NULL, token = bq_token()) {
-  json <- jsonlite::toJSON(body, pretty = TRUE, auto_unbox = TRUE)
+  json <- bq_body_json(body)
   req <- PATCH(
     paste0(base_url, url),
     body = json,
@@ -160,6 +160,12 @@ bq_patch <- function(url, body, ..., query = NULL, token = bq_token()) {
     query = prepare_bq_query(query)
   )
   process_request(req)
+}
+
+# Use full double precision so query parameter values (e.g. per-market
+# thresholds) are not silently rounded by jsonlite's default of 4 digits.
+bq_body_json <- function(body) {
+  jsonlite::toJSON(body, pretty = TRUE, auto_unbox = TRUE, digits = 22L)
 }
 
 #' @importFrom httr POST PUT add_headers headers config status_code

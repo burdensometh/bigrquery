@@ -1,5 +1,8 @@
 # bigrquery (development version)
 
+* `bq_param_struct()` is a new constructor for a single `STRUCT` query parameter, and `bq_param_array()` now accepts a field specification as its `type`, sending a data frame or list of rows as one typed `ARRAY<STRUCT<...>>` parameter. This lets a single parameterised query consume a changing roster of rows (e.g. one row per market and its threshold) via `UNNEST(@x)`, rather than pasting values into SQL. An empty roster sends an empty typed array, `NA` or absent fields are sent as `NULL`, and rows with undeclared or duplicate fields are an error.
+* `bq_perform_query()` and friends now serialise request bodies with full double precision, so `FLOAT` parameter values (such as per-market thresholds) are no longer rounded to 4 significant digits.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).

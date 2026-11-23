@@ -326,7 +326,11 @@ bq_perform_load <- function(
 #'
 #'   Generally, you can supply R vectors and they will be automatically
 #'   converted to the correct type. If you need greater control, you can call
-#'   [bq_param_scalar()] or [bq_param_array()] explicitly.
+#'   [bq_param_scalar()], [bq_param_array()], or [bq_param_struct()] explicitly.
+#'   In particular, `bq_param_array()` accepts a field specification as its
+#'   `type`, which sends a data frame or list of rows as a single
+#'   `ARRAY<STRUCT<...>>` parameter. This lets one query consume a changing
+#'   roster of rows via `UNNEST(@x)`.
 #'
 #'   See <https://docs.cloud.google.com/bigquery/docs/parameterized-queries>
 #'   for more details.

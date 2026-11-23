@@ -138,6 +138,43 @@ test_that("can supply array parameters", {
   expect_setequal(df$values, c("a", "b"))
 })
 
+test_that("can supply struct array parameters", {
+  job <- bq_project_query(
+    bq_test_project(),
+    "SELECT market, threshold FROM UNNEST(@roster) WITH OFFSET",
+    parameters = list(
+      roster = bq_param_array(
+        data.frame(market = c("US", "GB"), threshold = c(10, 12.5)),
+        type = c(market = "STRING", threshold = "FLOAT")
+      )
+    )
+  )
+  df <- bq_table_download(job)
+  expect_equal(df$market, c("US", "GB"))
+  expect_equal(df$threshold, c(10, 12.5))
+})
+
+test_that("an empty struct array sends a typed empty array", {
+  query <- bq_perform_query_data(
+    "SELECT * FROM UNNEST(@roster)",
+    parameters = list(
+      roster = bq_param_array(
+        data.frame(market = character(), threshold = numeric()),
+        type = c(market = "STRING", threshold = "FLOAT")
+      )
+    )
+  )
+
+  expect_equal(
+    query$queryParameters[[1]]$parameterValue,
+    list(arrayValues = list())
+  )
+  expect_equal(
+    unclass(query$queryParameters[[1]]$parameterType$arrayType$type),
+    "STRUCT"
+  )
+})
+
 test_that("can estimate cost and get schema", {
   cost <- bq_perform_query_dry_run(
     "SELECT count(*) FROM bigquery-public-data.moon_phases.moon_phases",

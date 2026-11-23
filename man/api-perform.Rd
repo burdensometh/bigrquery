@@ -191,7 +191,11 @@ Parameter \code{x} will be matched to placeholder \verb{@x}.
 
 Generally, you can supply R vectors and they will be automatically
 converted to the correct type. If you need greater control, you can call
-\code{\link[=bq_param_scalar]{bq_param_scalar()}} or \code{\link[=bq_param_array]{bq_param_array()}} explicitly.
+\code{\link[=bq_param_scalar]{bq_param_scalar()}}, \code{\link[=bq_param_array]{bq_param_array()}}, or \code{\link[=bq_param_struct]{bq_param_struct()}} explicitly.
+In particular, \code{bq_param_array()} accepts a field specification as its
+\code{type}, which sends a data frame or list of rows as a single
+\verb{ARRAY<STRUCT<...>>} parameter. This lets one query consume a changing
+roster of rows via \verb{UNNEST(@x)}.
 
 See \url{https://docs.cloud.google.com/bigquery/docs/parameterized-queries}
 for more details.}

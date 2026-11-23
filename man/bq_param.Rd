@@ -4,6 +4,7 @@
 \alias{bq_param}
 \alias{bq_param_scalar}
 \alias{bq_param_array}
+\alias{bq_param_struct}
 \title{Explicitly define query parameters}
 \usage{
 bq_param(value, type = NULL, name = NULL)
@@ -11,11 +12,17 @@ bq_param(value, type = NULL, name = NULL)
 bq_param_scalar(value, type = NULL, name = NULL)
 
 bq_param_array(value, type = NULL, name = NULL)
+
+bq_param_struct(value, type = NULL, name = NULL)
 }
 \arguments{
-\item{value}{vector of parameter values}
+\item{value}{vector of parameter values. For STRUCT parameters, a named list
+(or one-row data frame) or, for arrays of STRUCT, a data frame or list of
+rows.}
 
-\item{type}{BigQuery type of the parameter}
+\item{type}{BigQuery type of the parameter. For scalar parameters this is a
+type string like \code{"STRING"}. For STRUCT parameters it's a field
+specification, as described in the STRUCT semantics section.}
 
 \item{name}{name of the parameter in the query, omitting the \code{@}}
 }
@@ -23,7 +30,43 @@ bq_param_array(value, type = NULL, name = NULL)
 By default, bigrquery will assume vectors of length 1 are scalars,
 and longer vectors are arrays. If you need to pass a length-1 array,
 you'll need to explicitly use \code{bq_param_array()}.
+
+\code{bq_param_struct()} creates a single \code{STRUCT} parameter from a named list or
+a one-row data frame. \code{bq_param_array()} also accepts a field specification
+as its \code{type}, in which case each element of \code{value} is a row and the
+parameter becomes an \verb{ARRAY<STRUCT<...>>}. This makes it easy to send a
+changing roster of rows (e.g. one row per market and its threshold) as a
+single parameter that a query can consume with \verb{UNNEST(@name)}, so the same
+query can be reused when the roster changes.
 }
+\section{STRUCT semantics}{
+
+The \code{type} of a STRUCT parameter describes its fields. It can be:
+\itemize{
+\item A \link{bq_fields} object, or a list of \code{\link[=bq_field]{bq_field()}}s.
+\item A data frame, in which case field types are inferred from the columns.
+\item A named character vector or named list of BigQuery type strings, e.g.
+\code{c(market = "STRING", threshold = "FLOAT")}.
+}
+
+The \code{value} of a STRUCT array is a data frame or a list of named lists (or
+one-row data frames), where each element is one row. Field values are matched
+to fields by name:
+\itemize{
+\item An empty roster (a data frame with zero rows, or a zero-length list) sends
+an empty array.
+\item \code{NA} field values are sent as SQL \code{NULL}.
+\item A declared field that's absent from a row is also sent as SQL \code{NULL}.
+\item A row field that isn't declared in \code{type} is an error.
+\item Duplicated field names, either in \code{type} or within a row, are an error.
+}
+
+When \code{type} is \code{NULL} and \code{value} is a data frame, field types are inferred
+from the column classes, using the same rules as \code{\link[=as_bq_fields]{as_bq_fields()}}. Supply
+\code{type} explicitly when a column is empty or contains only \code{NA}, because the
+inferred type may not be what BigQuery expects.
+}
+
 \examples{
 # bq_param() automatically picks scalar vs array based on length
 bq_param("a")
@@ -31,5 +74,19 @@ bq_param(c("a", "b", "c"))
 
 # use bq_param_array() to create a length-1 array
 bq_param_array("a")
+
+# send a roster of markets and per-market thresholds as one
+# ARRAY<STRUCT<market STRING, threshold FLOAT>> parameter
+thresholds <- data.frame(
+  market = c("US", "GB"),
+  threshold = c(10, 12.5)
+)
+bq_param_array(thresholds, type = c(market = "STRING", threshold = "FLOAT"))
+
+# a single STRUCT parameter
+bq_param_struct(list(market = "US", threshold = NA), type = c(
+  market = "STRING",
+  threshold = "FLOAT"
+))
 }
 \keyword{internal}

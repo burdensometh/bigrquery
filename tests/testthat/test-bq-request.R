@@ -19,6 +19,12 @@ test_that("explicit api keys override env vars", {
   )
 })
 
+test_that("request bodies keep full double precision", {
+  json <- bq_body_json(list(value = 0.001234567))
+
+  expect_match(json, "0.001234567", fixed = TRUE)
+})
+
 test_that("pagination warns if pages left on server", {
   skip_if_no_auth()
 
