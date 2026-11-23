@@ -54,6 +54,7 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Collate:
     'bigrquery-package.R'
+    'bq-as-of.R'
     'bq-auth.R'
     'bq-dataset.R'
     'bq-download.R'

@@ -1,5 +1,7 @@
 # bigrquery (development version)
 
+* New `bq_table_as_of()` reads a table as of a specific UTC instant using BigQuery time travel, materializing the result as its own `bq_table_as_of` object so an analysis can be reproduced even after late-arriving rows change the source table. `bq_table_as_of_source()` and `bq_table_as_of_time()` report the source table and the instant that was read; reading outside the table's time travel window throws an error of class `bigrquery_as_of_out_of_window` so it can be told apart from a successful read that simply has no rows (#515).
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).
