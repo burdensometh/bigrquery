@@ -44,6 +44,7 @@ bq_perform_load(
   nskip = 0,
   create_disposition = "CREATE_IF_NEEDED",
   write_disposition = "WRITE_EMPTY",
+  max_bad_records = 0,
   ...,
   labels = getOption("bigrquery.labels")
 )
@@ -183,6 +184,12 @@ Bigtable table. For Google Cloud Datastore backups: Exactly one URI
 can be specified. Also, the '*' wildcard character is not allowed.}
 
 \item{nskip}{For \code{source_format = "CSV"}, the number of header rows to skip.}
+
+\item{max_bad_records}{The maximum number of rows with errors that
+BigQuery may discard while still considering the job successful. The
+default, 0, fails the job if any row is invalid. Set this explicitly to
+tolerate a limited number of bad records, and inspect the discarded rows
+with \code{\link[=bq_job_load_stats]{bq_job_load_stats()}} before using the loaded data.}
 
 \item{query}{SQL query string.}
 

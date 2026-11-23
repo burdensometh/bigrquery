@@ -58,6 +58,191 @@ test_that("can roundtrip via save + load", {
   expect_equal(dim(df), c(32, 11))
 })
 
+test_that("bq_table_load_staged publishes batches within tolerance", {
+  target <- bq_table("p", "d", "target")
+  staging <- bq_table("p", "d", "staging")
+  job <- bq_job("p", "job_1")
+
+  copied <- NULL
+  local_mocked_bindings(
+    bq_perform_load = function(x, source_uris, ...) job,
+    bq_job_wait = function(x, ...) invisible(x),
+    bq_job_load_stats = function(x) {
+      list(
+        input_files = 1,
+        input_bytes = 100,
+        output_rows = 98,
+        output_bytes = 99,
+        bad_records = 2
+      )
+    },
+    bq_table_copy = function(x, dest, ...) {
+      copied <<- list(x = x, dest = dest)
+      invisible(dest)
+    }
+  )
+
+  report <- bq_table_load_staged(
+    target,
+    "gs://bucket/file.json",
+    staging,
+    max_bad_records = 2,
+    quiet = TRUE
+  )
+
+  expect_true(report$published)
+  expect_equal(report$rows_total, 100)
+  expect_equal(report$rows_loaded, 98)
+  expect_equal(report$rows_discarded, 2)
+  expect_identical(report$job, job)
+  expect_identical(report$staging, staging)
+  expect_identical(copied$x, staging)
+  expect_identical(copied$dest, target)
+})
+
+test_that("bq_table_load_staged rejects batches over tolerance", {
+  target <- bq_table("p", "d", "target")
+  staging <- bq_table("p", "d", "staging")
+  job <- bq_job("p", "job_1")
+
+  copied <- NULL
+  local_mocked_bindings(
+    bq_perform_load = function(x, source_uris, ...) job,
+    bq_job_wait = function(x, ...) invisible(x),
+    bq_job_load_stats = function(x) {
+      list(
+        input_files = 1,
+        input_bytes = 100,
+        output_rows = 95,
+        output_bytes = 90,
+        bad_records = 5
+      )
+    },
+    bq_table_copy = function(x, dest, ...) {
+      copied <<- list(x = x, dest = dest)
+      invisible(dest)
+    }
+  )
+
+  report <- bq_table_load_staged(
+    target,
+    "gs://bucket/file.json",
+    staging,
+    max_bad_records = 2,
+    quiet = TRUE
+  )
+
+  expect_false(report$published)
+  expect_null(copied)
+  expect_equal(report$rows_total, 100)
+  expect_equal(report$rows_discarded, 5)
+  expect_identical(report$job, job)
+  expect_identical(report$staging, staging)
+})
+
+test_that("bq_table_load_staged loads into staging tolerating bad records", {
+  staging <- bq_table("p", "d", "staging")
+  job <- bq_job("p", "job_1")
+
+  load_args <- NULL
+  local_mocked_bindings(
+    bq_perform_load = function(x, source_uris, ...) {
+      load_args <<- c(list(x = x), list(...))
+      job
+    },
+    bq_job_wait = function(x, ...) invisible(x),
+    bq_job_load_stats = function(x) {
+      list(
+        input_files = 1,
+        input_bytes = 1,
+        output_rows = 1,
+        output_bytes = 1,
+        bad_records = 0
+      )
+    },
+    bq_table_copy = function(x, dest, ...) invisible(dest)
+  )
+
+  bq_table_load_staged(
+    "p.d.target",
+    "gs://bucket/file.json",
+    staging,
+    quiet = TRUE
+  )
+
+  expect_identical(load_args$x, staging)
+  expect_equal(load_args$write_disposition, "WRITE_TRUNCATE")
+  expect_equal(load_args$max_bad_records, .Machine$integer.max)
+})
+
+test_that("bq_table_load_staged reports the outcome", {
+  job <- bq_job("p", "job_1")
+  local_mocked_bindings(
+    bq_perform_load = function(x, source_uris, ...) job,
+    bq_job_wait = function(x, ...) invisible(x),
+    bq_table_copy = function(x, dest, ...) invisible(dest),
+    bq_job_load_stats = function(x) {
+      list(
+        input_files = 1,
+        input_bytes = 100,
+        output_rows = 98,
+        output_bytes = 99,
+        bad_records = 2
+      )
+    }
+  )
+
+  expect_snapshot(
+    bq_table_load_staged(
+      "p.d.target",
+      "gs://bucket/file.json",
+      "p.d.staging",
+      max_bad_records = 2,
+      quiet = FALSE
+    )
+  )
+})
+
+test_that("bq_table_load_staged reports rejection", {
+  job <- bq_job("p", "job_1")
+  local_mocked_bindings(
+    bq_perform_load = function(x, source_uris, ...) job,
+    bq_job_wait = function(x, ...) invisible(x),
+    bq_table_copy = function(x, dest, ...) invisible(dest),
+    bq_job_load_stats = function(x) {
+      list(
+        input_files = 1,
+        input_bytes = 100,
+        output_rows = 95,
+        output_bytes = 90,
+        bad_records = 5
+      )
+    }
+  )
+
+  expect_snapshot(
+    bq_table_load_staged(
+      "p.d.target",
+      "gs://bucket/file.json",
+      "p.d.staging",
+      max_bad_records = 2,
+      quiet = FALSE
+    )
+  )
+})
+
+test_that("bq_table_load_staged checks its inputs", {
+  expect_snapshot(
+    bq_table_load_staged(
+      "p.d.t",
+      "gs://bucket/file.json",
+      "p.d.s",
+      max_bad_records = -1
+    ),
+    error = TRUE
+  )
+})
+
 test_that("can copy table from public dataset", {
   my_natality <- bq_test_table()
 

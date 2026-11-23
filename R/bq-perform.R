@@ -262,6 +262,11 @@ export_json <- function(values, json_digits = NULL) {
 #'   (like a data frame). Leave as `NULL` to allow BigQuery to auto-detect
 #'   the fields.
 #' @param nskip For `source_format = "CSV"`, the number of header rows to skip.
+#' @param max_bad_records The maximum number of rows with errors that
+#'   BigQuery may discard while still considering the job successful. The
+#'   default, 0, fails the job if any row is invalid. Set this explicitly to
+#'   tolerate a limited number of bad records, and inspect the discarded rows
+#'   with [bq_job_load_stats()] before using the loaded data.
 bq_perform_load <- function(
   x,
   source_uris,
@@ -271,6 +276,7 @@ bq_perform_load <- function(
   nskip = 0,
   create_disposition = "CREATE_IF_NEEDED",
   write_disposition = "WRITE_EMPTY",
+  max_bad_records = 0,
   ...,
   labels = getOption("bigrquery.labels")
 ) {
@@ -281,6 +287,7 @@ bq_perform_load <- function(
   check_number_decimal(nskip, min = 0)
   check_string(create_disposition)
   check_string(write_disposition)
+  check_number_whole(max_bad_records, min = 0)
   check_labels(labels)
 
   load <- list(
@@ -288,7 +295,8 @@ bq_perform_load <- function(
     sourceFormat = unbox(source_format),
     destinationTable = tableReference(x),
     createDisposition = unbox(create_disposition),
-    writeDisposition = unbox(write_disposition)
+    writeDisposition = unbox(write_disposition),
+    maxBadRecords = unbox(max_bad_records)
   )
 
   if (source_format == "CSV") {

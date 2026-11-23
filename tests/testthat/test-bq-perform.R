@@ -75,6 +75,30 @@ test_that("bq_perform_copy creates job that succeeds", {
 
 # Load / extract ----------------------------------------------------------
 
+test_that("bq_perform_load sets maxBadRecords", {
+  captured <- NULL
+  local_mocked_bindings(
+    bq_post = function(url, body, query) {
+      captured <<- body
+      list(jobReference = list(projectId = "p", jobId = "j", location = "US"))
+    }
+  )
+
+  job <- bq_perform_load("p.d.t", "gs://bucket/file.json", max_bad_records = 5)
+  expect_s3_class(job, "bq_job")
+  expect_equal(as.numeric(captured$configuration$load$maxBadRecords), 5)
+
+  bq_perform_load("p.d.t", "gs://bucket/file.json")
+  expect_equal(as.numeric(captured$configuration$load$maxBadRecords), 0)
+})
+
+test_that("bq_perform_load checks max_bad_records", {
+  expect_snapshot(
+    bq_perform_load("p.d.t", "gs://bucket/file.json", max_bad_records = -1),
+    error = TRUE
+  )
+})
+
 test_that("can round trip extract + load", {
   ds_public <- bq_dataset("bigquery-public-data", "moon_phases")
 

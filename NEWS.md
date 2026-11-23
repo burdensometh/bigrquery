@@ -1,5 +1,10 @@
 # bigrquery (development version)
 
+* New `bq_job_load_stats()` retrieves the load statistics for a job, including the number of rows that BigQuery discarded as bad records.
+* `bq_job_show_statistics()` now reports the number of discarded bad records for load jobs, so silently dropped rows are no longer hidden.
+* `bq_perform_load()` gains a `max_bad_records` argument that sets the maximum number of bad records BigQuery may discard while still considering the job successful.
+* New `bq_table_load_staged()` loads data from Cloud Storage into a staging table and only publishes it to the target table when the number of discarded rows is within `max_bad_records`. Rejected batches leave the target table untouched and the report includes the staged table and the original load job for inspection.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).

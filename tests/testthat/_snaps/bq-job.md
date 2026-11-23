@@ -1,3 +1,20 @@
+# bq_job_load_stats errors for jobs without load statistics
+
+    Code
+      bq_job_load_stats(bq_job("p", "j"))
+    Condition
+      Error in `bq_job_load_stats()`:
+      ! Job p.j.US does not have load statistics.
+
+# bq_job_show_statistics reveals discarded bad records
+
+    Code
+      bq_job_show_statistics(bq_job("p", "j"))
+    Message
+      Input: 100 B
+      Output: 90 B
+      Discarded: 3 bad records
+
 # can control chattiness of bq_job_wait
 
     Code

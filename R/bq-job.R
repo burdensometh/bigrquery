@@ -55,6 +55,10 @@ bq_job_show_statistics <- function(x) {
     out_bytes <- as.numeric(stats$load$outputBytes)
     cli::cli_inform("Input: {prettyunits::pretty_bytes(in_bytes)}")
     cli::cli_inform("Output: {prettyunits::pretty_bytes(out_bytes)}")
+    bad_records <- as.numeric(stats$load$badRecords %||% 0)
+    if (bad_records > 0) {
+      cli::cli_inform("Discarded: {bad_records} bad record{?s}")
+    }
   }
 
   if ("query" %in% names(stats)) {
@@ -63,6 +67,43 @@ bq_job_show_statistics <- function(x) {
   }
 
   invisible(x)
+}
+
+#' Retrieve load statistics for a job
+#'
+#' Returns the load statistics for a load job, including the number of rows
+#' that BigQuery discarded as bad records. A load job can succeed overall
+#' while silently discarding rows (see the `max_bad_records` argument of
+#' [bq_perform_load()]), so check these statistics before relying on the
+#' loaded data. [bq_table_load_staged()] automates this check.
+#'
+#' @param x A [bq_job] created by [bq_perform_load()].
+#' @return A list with components:
+#'   * `input_files`: number of source files read.
+#'   * `input_bytes`: size of the source files in bytes.
+#'   * `output_rows`: number of rows loaded into the destination table.
+#'   * `output_bytes`: size of the loaded data in bytes.
+#'   * `bad_records`: number of rows discarded because they were invalid.
+#' @export
+#' @examplesIf bq_testable()
+#' ds <- bq_test_dataset()
+#' job <- bq_perform_upload(bq_table(ds, "mtcars"), mtcars)
+#' bq_job_wait(job)
+#' bq_job_load_stats(job)
+bq_job_load_stats <- function(x) {
+  x <- as_bq_job(x)
+  stats <- bq_job_meta(x, "statistics")$statistics$load
+  if (is.null(stats)) {
+    cli::cli_abort("Job {x} does not have load statistics.")
+  }
+
+  list(
+    input_files = as.numeric(stats$inputFiles %||% 0),
+    input_bytes = as.numeric(stats$inputFileBytes %||% 0),
+    output_rows = as.numeric(stats$outputRows %||% 0),
+    output_bytes = as.numeric(stats$outputBytes %||% 0),
+    bad_records = as.numeric(stats$badRecords %||% 0)
+  )
 }
 
 #' @param quiet If `FALSE`, displays progress bar; if `TRUE` is silent;
