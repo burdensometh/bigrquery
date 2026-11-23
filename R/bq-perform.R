@@ -126,6 +126,13 @@ bq_perform_extract <- function(
 #'     'duplicate' error is returned in the job result.
 #' @param json_digits Species the number of digits for formatting
 #'   numeric values.
+#' @param job_id A stable identifier for the upload job, e.g. one derived
+#'   from the batch of data being appended. If a job with this id already
+#'   exists, typically because a previous attempt's response was lost, the
+#'   existing job is checked to confirm that it loads the same batch into
+#'   the same table, and is returned instead of creating a duplicate job.
+#'   This makes retries with the same `job_id` safe: rows are never
+#'   appended twice.
 bq_perform_upload <- function(
   x,
   values,
@@ -136,7 +143,8 @@ bq_perform_upload <- function(
   ...,
   billing = x$project,
   json_digits = NULL,
-  labels = getOption("bigrquery.labels")
+  labels = getOption("bigrquery.labels"),
+  job_id = NULL
 ) {
   x <- as_bq_table(x)
   if (!is.data.frame(values)) {
@@ -149,6 +157,7 @@ bq_perform_upload <- function(
   check_string(billing)
   json_digits <- check_digits(json_digits)
   check_labels(labels)
+  check_string(job_id, allow_null = TRUE)
 
   load <- list(
     sourceFormat = unbox(source_format),
@@ -170,6 +179,12 @@ bq_perform_upload <- function(
       labels = labels
     )
   )
+  if (!is.null(job_id)) {
+    metadata$jobReference <- list(
+      projectId = unbox(billing),
+      jobId = unbox(job_id)
+    )
+  }
   metadata <- bq_body(metadata, ...)
   metadata <- list(
     "type" = "application/json; charset=UTF-8",
@@ -195,13 +210,166 @@ bq_perform_upload <- function(
   }
 
   url <- bq_path(billing, jobs = "")
-  res <- bq_upload(
-    url,
-    metadata,
-    media,
-    query = list(fields = "jobReference")
+  if (is.null(job_id)) {
+    res <- bq_upload(
+      url,
+      metadata,
+      media,
+      query = list(fields = "jobReference")
+    )
+    return(as_bq_job(res$jobReference))
+  }
+
+  res <- tryCatch(
+    bq_upload(
+      url,
+      metadata,
+      media,
+      query = list(fields = "jobReference")
+    ),
+    bigrquery_duplicate = function(err) NULL
   )
-  as_bq_job(res$jobReference)
+  if (!is.null(res)) {
+    return(as_bq_job(res$jobReference))
+  }
+
+  # A job with this id already exists, typically because a previous attempt
+  # succeeded but its response was lost. Adopt the existing job after
+  # checking that it describes the same batch.
+  bq_recover_upload_job(
+    job_id,
+    billing = billing,
+    x = x,
+    source_format = source_format,
+    create_disposition = create_disposition,
+    write_disposition = write_disposition
+  )
+}
+
+# Fetch the existing job called `job_id` and check that it describes the
+# same batch (same destination table and load configuration) before
+# adopting it, so that retrying an append with the same `job_id` can't
+# silently write rows twice.
+bq_recover_upload_job <- function(
+  job_id,
+  billing,
+  x,
+  source_format,
+  create_disposition,
+  write_disposition,
+  call = caller_env()
+) {
+  # Jobs run in the location of the destination dataset
+  location <- tryCatch(
+    bq_dataset_meta(bq_dataset(x$project, x$dataset), "location")$location,
+    bigrquery_http_404 = function(err) "US"
+  )
+  job <- bq_job(billing, job_id, location)
+
+  fields <- paste0(
+    "configuration(load(",
+    "destinationTable,sourceFormat,createDisposition,writeDisposition",
+    "))"
+  )
+  meta <- tryCatch(
+    bq_job_meta(job, fields),
+    bigrquery_http_404 = function(err) {
+      cli::cli_abort(
+        c(
+          "A job with id {.str {job_id}} already exists, but it can't be fetched.",
+          i = "It may be running in a different location than dataset {.val {x$project}.{x$dataset}}."
+        ),
+        call = call
+      )
+    }
+  )
+
+  check_recovered_load_job(
+    meta$configuration$load,
+    job_id = job_id,
+    x = x,
+    source_format = source_format,
+    create_disposition = create_disposition,
+    write_disposition = write_disposition,
+    call = call
+  )
+
+  job
+}
+
+check_recovered_load_job <- function(
+  load,
+  job_id,
+  x,
+  source_format,
+  create_disposition,
+  write_disposition,
+  call = caller_env()
+) {
+  if (is.null(load)) {
+    cli::cli_abort(
+      c(
+        "A job with id {.str {job_id}} already exists, but it isn't a load job.",
+        i = "Use a different {.arg job_id} for each batch, reusing an id only to retry the same batch."
+      ),
+      call = call
+    )
+  }
+
+  destination <- load$destinationTable
+  same_destination <- !is.null(destination) &&
+    identical(destination$projectId, x$project) &&
+    identical(destination$datasetId, x$dataset) &&
+    identical(destination$tableId, x$table)
+  if (!same_destination) {
+    other <- paste0(
+      destination$projectId %||% "?",
+      ".",
+      destination$datasetId %||% "?",
+      ".",
+      destination$tableId %||% "?"
+    )
+    cli::cli_abort(
+      c(
+        "A job with id {.str {job_id}} already exists, but it loads into a different table.",
+        i = "The existing job loads into {.val {other}}.",
+        i = "This batch targets {.val {toString(x)}}.",
+        i = "Use a different {.arg job_id} for each batch, reusing an id only to retry the same batch."
+      ),
+      call = call
+    )
+  }
+
+  settings <- list(
+    `source format` = list(load$sourceFormat, source_format),
+    `create disposition` = list(load$createDisposition, create_disposition),
+    `write disposition` = list(load$writeDisposition, write_disposition)
+  )
+  differs <- !map_lgl(settings, function(setting) {
+    identical(setting[[1]], setting[[2]])
+  })
+  if (any(differs)) {
+    bullets <- map_chr(names(settings)[differs], function(name) {
+      setting <- settings[[name]]
+      paste0(
+        name,
+        ": existing job uses ",
+        setting[[1]] %||% "<unset>",
+        ", but this batch uses ",
+        setting[[2]]
+      )
+    })
+    cli::cli_abort(
+      c(
+        "A job with id {.str {job_id}} already exists, but its load configuration doesn't match this batch.",
+        set_names(bullets, "x"),
+        i = "Use a different {.arg job_id} for each batch, reusing an id only to retry the same batch."
+      ),
+      call = call
+    )
+  }
+
+  invisible(TRUE)
 }
 
 # https://docs.cloud.google.com/bigquery/docs/loading-data-cloud-storage-json#details_of_loading_json_data

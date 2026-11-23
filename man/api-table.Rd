@@ -37,7 +37,8 @@ bq_table_upload(
   values,
   ...,
   quiet = getOption("bigrquery.quiet", NA),
-  json_digits = NULL
+  json_digits = NULL,
+  job_id = NULL
 )
 
 bq_table_save(
@@ -69,6 +70,14 @@ if \code{NA} picks based on whether or not you're in an interactive context.}
 
 \item{json_digits}{Species the number of digits for formatting
 numeric values.}
+
+\item{job_id}{A stable identifier for the upload job, e.g. one derived
+from the batch of data being appended. If a job with this id already
+exists, typically because a previous attempt's response was lost, the
+existing job is checked to confirm that it loads the same batch into
+the same table, and is returned instead of creating a duplicate job.
+This makes retries with the same \code{job_id} safe: rows are never
+appended twice.}
 
 \item{destination_uris}{A character vector of fully-qualified Google Cloud
 Storage URIs where the extracted table should be written. Can export

@@ -146,12 +146,19 @@ bq_table_upload <- function(
   values,
   ...,
   quiet = getOption("bigrquery.quiet", NA),
-  json_digits = NULL
+  json_digits = NULL,
+  job_id = NULL
 ) {
   x <- as_bq_table(x)
   json_digits <- check_digits(json_digits)
 
-  job <- bq_perform_upload(x, values, ..., json_digits = json_digits)
+  job <- bq_perform_upload(
+    x,
+    values,
+    ...,
+    json_digits = json_digits,
+    job_id = job_id
+  )
   bq_job_wait(job, quiet = quiet)
 
   invisible(x)

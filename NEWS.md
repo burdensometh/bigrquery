@@ -1,5 +1,7 @@
 # bigrquery (development version)
 
+* `bq_table_upload()` and `bq_perform_upload()` gain a `job_id` argument that gives the upload job a stable identity. If a job with that id already exists (e.g. because a previous attempt's response was lost), the existing job is checked to confirm it loads the same batch into the same table and is returned instead of creating a duplicate job, so retrying an append with the same `job_id` can't write rows twice. A mismatching destination or load configuration, or a failed job, is an error.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).

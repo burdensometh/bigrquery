@@ -32,7 +32,8 @@ bq_perform_upload(
   ...,
   billing = x$project,
   json_digits = NULL,
-  labels = getOption("bigrquery.labels")
+  labels = getOption("bigrquery.labels"),
+  job_id = NULL
 )
 
 bq_perform_load(
@@ -169,6 +170,14 @@ to the table.
 
 \item{json_digits}{Species the number of digits for formatting
 numeric values.}
+
+\item{job_id}{A stable identifier for the upload job, e.g. one derived
+from the batch of data being appended. If a job with this id already
+exists, typically because a previous attempt's response was lost, the
+existing job is checked to confirm that it loads the same batch into
+the same table, and is returned instead of creating a duplicate job.
+This makes retries with the same \code{job_id} safe: rows are never
+appended twice.}
 
 \item{source_uris}{The fully-qualified URIs that point to your data in
 Google Cloud.
