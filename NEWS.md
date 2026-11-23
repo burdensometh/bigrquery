@@ -1,5 +1,7 @@
 # bigrquery (development version)
 
+* New `bq_table_recalc()` recalculates one day's partition of a date-partitioned table in a single call: it stages the results of a query, validates the row count and date range against the staging table, then atomically replaces just that day's partition, leaving other days untouched. If validation fails, the target table is not modified and the staging table is kept for inspection.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).
