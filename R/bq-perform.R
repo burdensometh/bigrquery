@@ -8,6 +8,7 @@
 #' * `bq_perform_copy()`:    [bq_table_copy()].
 #' * `bq_perform_query()`:   [bq_dataset_query()], [bq_project_query()].
 #' * `bq_perform_upload()`:  [bq_table_upload()].
+#' * `bq_perform_append()`:  [bq_table_append()].
 #' * `bq_perform_load()`:    [bq_table_load()].
 #' * `bq_perform_extract()`: [bq_table_save()].
 #'
@@ -164,6 +165,96 @@ bq_perform_upload <- function(
     load$autodetect <- unbox(TRUE)
   }
 
+  bq_upload_job(
+    x,
+    load,
+    values,
+    source_format,
+    ...,
+    billing = billing,
+    json_digits = json_digits,
+    labels = labels
+  )
+}
+
+#' @export
+#' @name api-perform
+#' @param relax_fields A character vector naming fields that are allowed to
+#'   relax from `REQUIRED` to `NULLABLE` when appending. Use dotted paths for
+#'   fields nested inside records, e.g. `"address.zip"`. Relaxations not
+#'   listed here cause an error, so existing columns keep their types and
+#'   modes unless you explicitly opt in.
+bq_perform_append <- function(
+  x,
+  values,
+  ...,
+  relax_fields = NULL,
+  source_format = c("NEWLINE_DELIMITED_JSON", "PARQUET"),
+  billing = x$project,
+  json_digits = NULL,
+  labels = getOption("bigrquery.labels")
+) {
+  x <- as_bq_table(x)
+  if (!is.data.frame(values)) {
+    cli::cli_abort("{.arg values} must be a data frame.")
+  }
+  source_format <- arg_match(source_format)
+  check_character(relax_fields, allow_null = TRUE)
+  check_string(billing)
+  json_digits <- check_digits(json_digits)
+  check_labels(labels)
+
+  if (!bq_table_exists(x)) {
+    name <- toString(x)
+    cli::cli_abort(c(
+      "Can't append to {.field {name}} because the table doesn't exist.",
+      "i" = "Use {.fun bq_table_upload} to create a new table."
+    ))
+  }
+
+  # Compare the target and incoming schemas before submitting anything, so a
+  # failed append never leaves the table definition partially updated
+  target_fields <- bq_table_fields(x)
+  diff <- bq_schema_diff(target_fields, values, relax_fields = relax_fields)
+  update_options <- bq_schema_update_options(diff)
+
+  load <- list(
+    sourceFormat = unbox(source_format),
+    destinationTable = tableReference(x),
+    createDisposition = unbox("CREATE_NEVER"),
+    writeDisposition = unbox("WRITE_APPEND")
+  )
+  if (length(update_options) > 0) {
+    load$schemaUpdateOptions <- as.list(update_options)
+    if (source_format == "NEWLINE_DELIMITED_JSON") {
+      # Parquet files are self-describing, but JSON data is parsed against
+      # the merged schema so that new fields are picked up deterministically
+      load$schema <- list(fields = as_json(bq_fields_merge(target_fields, diff)))
+    }
+  }
+
+  bq_upload_job(
+    x,
+    load,
+    values,
+    source_format,
+    ...,
+    billing = billing,
+    json_digits = json_digits,
+    labels = labels
+  )
+}
+
+bq_upload_job <- function(
+  x,
+  load,
+  values,
+  source_format,
+  ...,
+  billing,
+  json_digits,
+  labels
+) {
   metadata <- list(
     configuration = list(
       load = load,

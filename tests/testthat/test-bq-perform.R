@@ -155,3 +155,13 @@ test_that("can estimate cost and get schema", {
   types <- vapply(schema, function(x) x$type, character(1))
   expect_equal(types, c("STRING", "STRING", "DATETIME"))
 })
+
+test_that("bq_perform_append validates its inputs before any API call", {
+  tb <- bq_table("project", "dataset", "table")
+
+  expect_error(bq_perform_append(tb, "not a data frame"), "data frame")
+  expect_error(
+    bq_perform_append(tb, data.frame(x = 1), relax_fields = 1),
+    "character"
+  )
+})

@@ -11,6 +11,7 @@
 \alias{bq_table_delete}
 \alias{bq_table_copy}
 \alias{bq_table_upload}
+\alias{bq_table_append}
 \alias{bq_table_save}
 \alias{bq_table_load}
 \alias{bq_table_patch}
@@ -36,6 +37,15 @@ bq_table_upload(
   x,
   values,
   ...,
+  quiet = getOption("bigrquery.quiet", NA),
+  json_digits = NULL
+)
+
+bq_table_append(
+  x,
+  values,
+  ...,
+  relax_fields = NULL,
   quiet = getOption("bigrquery.quiet", NA),
   json_digits = NULL
 )
@@ -70,6 +80,12 @@ if \code{NA} picks based on whether or not you're in an interactive context.}
 \item{json_digits}{Species the number of digits for formatting
 numeric values.}
 
+\item{relax_fields}{A character vector naming fields that are allowed to
+relax from \code{REQUIRED} to \code{NULLABLE} when appending. Use dotted paths for
+fields nested inside records, e.g. \code{"address.zip"}. Relaxations not
+listed here cause an error, so existing columns keep their types and
+modes unless you explicitly opt in.}
+
 \item{destination_uris}{A character vector of fully-qualified Google Cloud
 Storage URIs where the extracted table should be written. Can export
 up to 1 Gb of data per file. Use a wild card URI (e.g.
@@ -90,8 +106,8 @@ can be specified. Also, the '*' wildcard character is not allowed.}
 }
 \value{
 \itemize{
-\item \code{bq_table_copy()}, \code{bq_table_create()}, \code{bq_table_delete()}, \code{bq_table_upload()}:
-an invisible \link{bq_table}
+\item \code{bq_table_copy()}, \code{bq_table_create()}, \code{bq_table_delete()},
+\code{bq_table_upload()}, \code{bq_table_append()}: an invisible \link{bq_table}
 \item \code{bq_table_exists()}: either \code{TRUE} or \code{FALSE}.
 \item \code{bq_table_size()}: the size of the table in bytes
 \item \code{bq_table_fields()}: a \link{bq_fields}.
@@ -99,9 +115,9 @@ an invisible \link{bq_table}
 }
 \description{
 Basic create-read-update-delete verbs for tables, as well as functions
-uploading data (\code{bq_table_upload()}), saving to/loading from Google
-Cloud Storage (\code{bq_table_load()}, \code{bq_table_save()}), and getting
-various values from the metadata.
+uploading data (\code{bq_table_upload()}), appending data (\code{bq_table_append()}),
+saving to/loading from Google Cloud Storage (\code{bq_table_load()},
+\code{bq_table_save()}), and getting various values from the metadata.
 }
 \section{Google BigQuery API documentation}{
 
@@ -129,6 +145,10 @@ bq_table_create(
 bq_table_exists(bq_mtcars)
 
 bq_table_upload(bq_mtcars, mtcars)
+
+# Append more rows; the incoming schema is compared with the table's
+# schema before the job is submitted
+bq_table_append(bq_mtcars, mtcars[1:5, ])
 
 bq_table_fields(bq_mtcars)
 bq_table_size(bq_mtcars)

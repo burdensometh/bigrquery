@@ -1,9 +1,9 @@
 #' BigQuery tables
 #'
 #' Basic create-read-update-delete verbs for tables, as well as functions
-#' uploading data (`bq_table_upload()`), saving to/loading from Google
-#' Cloud Storage (`bq_table_load()`, `bq_table_save()`), and getting
-#' various values from the metadata.
+#' uploading data (`bq_table_upload()`), appending data (`bq_table_append()`),
+#' saving to/loading from Google Cloud Storage (`bq_table_load()`,
+#' `bq_table_save()`), and getting various values from the metadata.
 #'
 #' @param x A [bq_table], or an object coercible to a `bq_table`.
 #' @inheritParams api-job
@@ -14,8 +14,8 @@
 #' * [get](https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/tables/get)
 #' * [delete](https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/tables/delete)
 #' @return
-#' * `bq_table_copy()`, `bq_table_create()`, `bq_table_delete()`, `bq_table_upload()`:
-#'   an invisible [bq_table]
+#' * `bq_table_copy()`, `bq_table_create()`, `bq_table_delete()`,
+#'   `bq_table_upload()`, `bq_table_append()`: an invisible [bq_table]
 #' * `bq_table_exists()`: either `TRUE` or `FALSE`.
 #' * `bq_table_size()`: the size of the table in bytes
 #' * `bq_table_fields()`: a [bq_fields].
@@ -36,6 +36,10 @@
 #' bq_table_exists(bq_mtcars)
 #'
 #' bq_table_upload(bq_mtcars, mtcars)
+#'
+#' # Append more rows; the incoming schema is compared with the table's
+#' # schema before the job is submitted
+#' bq_table_append(bq_mtcars, mtcars[1:5, ])
 #'
 #' bq_table_fields(bq_mtcars)
 #' bq_table_size(bq_mtcars)
@@ -152,6 +156,31 @@ bq_table_upload <- function(
   json_digits <- check_digits(json_digits)
 
   job <- bq_perform_upload(x, values, ..., json_digits = json_digits)
+  bq_job_wait(job, quiet = quiet)
+
+  invisible(x)
+}
+
+#' @export
+#' @rdname api-table
+bq_table_append <- function(
+  x,
+  values,
+  ...,
+  relax_fields = NULL,
+  quiet = getOption("bigrquery.quiet", NA),
+  json_digits = NULL
+) {
+  x <- as_bq_table(x)
+  json_digits <- check_digits(json_digits)
+
+  job <- bq_perform_append(
+    x,
+    values,
+    ...,
+    relax_fields = relax_fields,
+    json_digits = json_digits
+  )
   bq_job_wait(job, quiet = quiet)
 
   invisible(x)

@@ -1,5 +1,8 @@
 # bigrquery (development version)
 
+* New `bq_table_append()` and `bq_perform_append()` provide an explicit append path for data frames. Before submitting a job, they compare the incoming data with the target table's schema using `bq_schema_diff()` and only then prepare the load options that the differences require: new nullable fields are added via `ALLOW_FIELD_ADDITION`, and `REQUIRED` -> `NULLABLE` relaxations are applied via `ALLOW_FIELD_RELAXATION` only for fields explicitly listed in the new `relax_fields` argument. Same-name type changes and other incompatibilities abort before anything is submitted, so a failed append never leaves the table definition partially updated.
+* New `bq_schema_diff()` reports how two field specifications differ, distinguishing legitimate new fields from same-name type changes, mode relaxations, and missing required fields.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).

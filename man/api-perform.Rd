@@ -4,6 +4,7 @@
 \alias{api-perform}
 \alias{bq_perform_extract}
 \alias{bq_perform_upload}
+\alias{bq_perform_append}
 \alias{bq_perform_load}
 \alias{bq_perform_query}
 \alias{bq_perform_query_dry_run}
@@ -30,6 +31,17 @@ bq_perform_upload(
   create_disposition = "CREATE_IF_NEEDED",
   write_disposition = "WRITE_EMPTY",
   ...,
+  billing = x$project,
+  json_digits = NULL,
+  labels = getOption("bigrquery.labels")
+)
+
+bq_perform_append(
+  x,
+  values,
+  ...,
+  relax_fields = NULL,
+  source_format = c("NEWLINE_DELIMITED_JSON", "PARQUET"),
   billing = x$project,
   json_digits = NULL,
   labels = getOption("bigrquery.labels")
@@ -170,6 +182,12 @@ to the table.
 \item{json_digits}{Species the number of digits for formatting
 numeric values.}
 
+\item{relax_fields}{A character vector naming fields that are allowed to
+relax from \code{REQUIRED} to \code{NULLABLE} when appending. Use dotted paths for
+fields nested inside records, e.g. \code{"address.zip"}. Relaxations not
+listed here cause an error, so existing columns keep their types and
+modes unless you explicitly opt in.}
+
 \item{source_uris}{The fully-qualified URIs that point to your data in
 Google Cloud.
 
@@ -220,6 +238,7 @@ you should use instead:
 \item \code{bq_perform_copy()}:    \code{\link[=bq_table_copy]{bq_table_copy()}}.
 \item \code{bq_perform_query()}:   \code{\link[=bq_dataset_query]{bq_dataset_query()}}, \code{\link[=bq_project_query]{bq_project_query()}}.
 \item \code{bq_perform_upload()}:  \code{\link[=bq_table_upload]{bq_table_upload()}}.
+\item \code{bq_perform_append()}:  \code{\link[=bq_table_append]{bq_table_append()}}.
 \item \code{bq_perform_load()}:    \code{\link[=bq_table_load]{bq_table_load()}}.
 \item \code{bq_perform_extract()}: \code{\link[=bq_table_save]{bq_table_save()}}.
 }

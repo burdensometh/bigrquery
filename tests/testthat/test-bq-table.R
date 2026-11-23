@@ -161,6 +161,59 @@ test_that("can patch table with new fields in the schema", {
   )
 })
 
+test_that("can append rows and add new nullable fields", {
+  tb <- bq_test_table()
+  bq_table_upload(tb, data.frame(id = 1:2, x = c("a", "b")))
+
+  bq_table_append(tb, data.frame(id = 3L, x = "c", extra = 1.5))
+
+  df <- bq_table_download(tb, api = "json")
+  expect_equal(nrow(df), 3)
+  expect_true("extra" %in% names(df))
+})
+
+test_that("append relaxes required fields only when allowed", {
+  tb <- bq_test_table()
+  fields <- bq_fields(list(
+    bq_field("id", "integer", mode = "REQUIRED"),
+    bq_field("x", "string")
+  ))
+  bq_table_create(tb, fields)
+
+  df <- data.frame(id = 1, x = "a")
+  expect_error(bq_table_append(tb, df), "relax")
+
+  bq_table_append(tb, df, relax_fields = "id")
+  modes <- vapply(bq_table_fields(tb), function(field) field$mode, character(1))
+  expect_equal(unname(modes), c("NULLABLE", "NULLABLE"))
+  expect_equal(bq_table_nrow(tb), 1)
+})
+
+test_that("failed append leaves table definition untouched", {
+  tb <- bq_test_table()
+  bq_table_upload(tb, data.frame(id = 1, x = "a"))
+
+  # `id` changes type (a problem) while `y` is a legitimate addition
+  expect_error(bq_table_append(tb, data.frame(id = "b", y = TRUE)))
+
+  expect_equal(bq_table_nrow(tb), 1)
+  fields <- bq_table_fields(tb)
+  expect_equal(
+    vapply(fields, function(field) field$name, character(1)),
+    c("id", "x")
+  )
+  expect_equal(
+    vapply(fields, function(field) field$type, character(1)),
+    c("INTEGER", "STRING")
+  )
+})
+
+test_that("can't append to a table that doesn't exist", {
+  tb <- bq_test_table()
+  expect_error(bq_table_append(tb, data.frame(id = 1)), "doesn't exist")
+  expect_false(bq_table_exists(tb))
+})
+
 test_that("can round-trip GEOGRAPHY", {
   skip_if_not_installed("wk")
 
