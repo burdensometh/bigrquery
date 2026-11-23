@@ -55,6 +55,7 @@ Roxygen: list(markdown = TRUE)
 Collate:
     'bigrquery-package.R'
     'bq-auth.R'
+    'bq-catalog.R'
     'bq-dataset.R'
     'bq-download.R'
     'bq-field.R'

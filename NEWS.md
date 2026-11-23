@@ -1,5 +1,8 @@
 # bigrquery (development version)
 
+* New `bq_catalog()` provides resumable, on-disk catalogs of projects, datasets, and tables. `bq_catalog_project_datasets()` and `bq_catalog_dataset_tables()` save their pagination position after every page, keyed by project and dataset identity, so an interrupted scheduled run resumes from the saved `nextPageToken` instead of re-reading old pages; changing request parameters invalidates a saved position, and an expired page token restarts the listing once.
+* `bq_catalog_commit()` builds an immutable catalog version from successfully completed listings, while `bq_catalog_status()` reports per-dataset progress. Datasets that return HTTP 403 are marked `access_denied` (with the server reason) instead of being mistaken for empty datasets, and `bq_catalog_tables()` retains their tables from the previous version so missing permission is never confused with deleted tables.
+
 # bigrquery 1.6.2
 
 * BigQuery error messages containing `{` or `}` are no longer mistaken for cli expressions, so the underlying server message is shown instead of a cli parse failure (#677).
